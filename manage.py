@@ -1,0 +1,19 @@
+#!/usr/bin/env python
+import os
+import sys
+
+
+def main():
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "outage_notifier.settings.local")
+    try:
+        from django.core.management import execute_from_command_line
+    except ImportError as exc:
+        raise ImportError(
+            "Couldn't import Django. Did you forget to activate the venv "
+            "(uv run ...) or run `uv sync`?"
+        ) from exc
+    execute_from_command_line(sys.argv)
+
+
+if __name__ == "__main__":
+    main()

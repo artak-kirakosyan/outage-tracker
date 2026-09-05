@@ -1,0 +1,21 @@
+[project]
+name = "outage-notifier"
+version = "0.1.0"
+description = "Nationwide utility outage tracking & notification system (ENA, Veolia, Gazprom) for Armenia"
+requires-python = ">=3.11"
+dependencies = [
+    "django>=5.2.8,<6.0",
+    "requests>=2.31",
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-django>=4.9",
+    "responses>=0.25",
+]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "outage_notifier.settings.test"
+python_files = ["test_*.py"]
