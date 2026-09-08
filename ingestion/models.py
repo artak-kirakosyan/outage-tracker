@@ -1,22 +1,8 @@
 from django.db import models
 
+from common.enums import Provider
 
-class Provider(models.TextChoices):
-    """
-    One entry per data *source*, not per utility — Veolia's website and
-    its Telegram channel are two distinct providers even though they're
-    the same utility, since we don't yet know if they publish the same
-    outages (see plan doc: "no deduping at the raw layer").
-
-    GAZPROM is reserved now so Phase 2 slots in with zero schema change,
-    per the plan's provider-abstraction decision. Do not implement a
-    Gazprom fetcher yet.
-    """
-
-    ENA = "ena", "ENA (Electric Network Armenia)"
-    VEOLIA_WEB = "veolia_web", "Veolia — website"
-    VEOLIA_TELEGRAM = "veolia_telegram", "Veolia — Telegram channel"
-    GAZPROM = "gazprom", "Gazprom Armenia (reserved, not implemented)"
+__all__ = ["Provider", "SourceType", "FetchStatus", "RawContent"]
 
 
 class SourceType(models.TextChoices):
