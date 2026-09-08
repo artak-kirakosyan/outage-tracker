@@ -1,3 +1,4 @@
+import datetime
 import json
 from pathlib import Path
 
@@ -12,7 +13,7 @@ def test_row2_two_confirmed_dayblocks_no_preliminary():
     text = normalize_multiline(TEXTS["row_2"])
     results = parse_planned_section(text, year=2026)
     dates = sorted({r.date for r in results if r.date})
-    assert dates == [__import__("datetime").date(2026, 9, 4), __import__("datetime").date(2026, 9, 7)]
+    assert dates == [datetime.date(2026, 9, 4), datetime.date(2026, 9, 7)]
     assert all(not r.is_preliminary for r in results)
 
 
@@ -20,13 +21,11 @@ def test_row18_six_dayblocks_two_confirmed_four_preliminary():
     text = normalize_multiline(TEXTS["row_18"])
     results = parse_planned_section(text, year=2026)
     dates = sorted({r.date for r in results if r.date})
-    assert dates == [
-        __import__("datetime").date(2026, 9, d) for d in (7, 8, 9, 10, 11, 14)
-    ]
+    assert dates == [datetime.date(2026, 9, d) for d in (7, 8, 9, 10, 11, 14)]
     confirmed_dates = {r.date for r in results if r.date and not r.is_preliminary}
     preliminary_dates = {r.date for r in results if r.date and r.is_preliminary}
-    assert confirmed_dates == {__import__("datetime").date(2026, 9, d) for d in (7, 8)}
-    assert preliminary_dates == {__import__("datetime").date(2026, 9, d) for d in (9, 10, 11, 14)}
+    assert confirmed_dates == {datetime.date(2026, 9, d) for d in (7, 8)}
+    assert preliminary_dates == {datetime.date(2026, 9, d) for d in (9, 10, 11, 14)}
 
 
 def test_no_announcement_fails_to_parse():
@@ -51,7 +50,12 @@ def test_region_extraction_on_known_real_example():
 def test_marz_extraction_on_known_real_example():
     text = normalize_multiline(TEXTS["row_18"])
     results = parse_planned_section(text, year=2026)
-    ararat = [r for r in results if r.marz_or_yerevan and "Արարատ" in r.marz_or_yerevan]
+    # Exact match, not substring: marz is currently stored in the
+    # inflected/genitive form the source text uses ("Արարատի"), not
+    # canonical nominative ("Արարատ") — normalization to canonical form
+    # is deliberately deferred (see plan doc §7). A substring check here
+    # would silently pass either form and mask that fact.
+    ararat = [r for r in results if r.marz_or_yerevan == "Արարատի"]
     assert ararat, "expected at least one Ararat marz announcement"
     assert any("Այգեզարդ" in r.raw_address_text for r in ararat)
 

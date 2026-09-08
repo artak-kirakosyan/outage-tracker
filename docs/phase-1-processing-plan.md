@@ -180,6 +180,28 @@ without creating duplicate announcements.
 
 ## 7. Documented parsing assumptions / known simplifications
 
+- **Street numbers vs. house numbers (fixed after review):** some
+  outlying districts (Նոր Արեշ, Վարդաշեն, Մուշական, ...) number their
+  *streets* rather than naming them — `Նոր Արեշ 12, 14 փողոցների` means
+  streets 12 and 14 of Nor Aresh, not house numbers 12/14 on a street
+  named "Նոր Արեշ". This was initially unhandled: the Veolia parser
+  folded these into ordinary house-number `street_range` rows, silently
+  wrong rather than flagged (didn't show up in `unparsed`, so the "0%
+  unparsed" test-coverage stat overstated how clean the breakdown
+  really was). Fixed via a new `street_number_range` kind, detected
+  from the source's own trailing noun (`փողոց(ի/ներ/ների)` = "streets"
+  vs. `շենք(եր)(ի)`/`առանձնատներ` = "buildings") rather than a
+  hardcoded list of numbered-street districts — see
+  `address_grammar.py`'s module docstring for the detection rule and
+  its residual limitation.
+- **Marz names are stored in inflected/genitive Armenian form**
+  (`Արագածոտնի`, `Սյունիքի`, `Լոռու`) rather than canonical/nominative
+  form (`Արագածոտն`, `Սյունիք`, `Լոռի`), consistently across both
+  parsers. Not a bug, but it will need normalizing before matching
+  against a canonical marz list — deliberately deferred rather than
+  guessed at now; noted here so it isn't rediscovered during the
+  matching-layer work.
+
 - **Sub-numbered range endpoints** (`67-80/2`): stored exactly as parsed
   (`sub=None` when a side has no sub-number — not synthesized). The
   "implicit `/1` floor" interpretation from `outage-data-patterns-v2.md`
@@ -210,7 +232,7 @@ without creating duplicate announcements.
 
 ## 8. Test results (against real data)
 
-44 tests, all passing, run against every distinct real sample in the
+50 tests, all passing, run against every distinct real sample in the
 uploaded db (not synthetic fixtures):
 
 - **Veolia — all 40 distinct posts:** every post reaches at least
@@ -218,8 +240,11 @@ uploaded db (not synthetic fixtures):
   time + address all extracted cleanly), including the two-district
   `և`-join, the missing-`-ում`-suffix case, the lowercase-district case,
   and the source-side run-on-word typo. 195 locations parsed across
-  those posts: 48.7% `whole_street`, 47.2% `street_range`, 4.1%
-  `whole_area`, **0% `unparsed`**.
+  those posts: 48.7% `whole_street`, 34.9% `street_range`, 12.3%
+  `street_number_range`, 4.1% `whole_area`, **0% `unparsed`**.
+  `street_number_range` (numbered-street areas like Նոր Արեշ/Վարդաշեն/
+  Մուշական — see §7) was previously silently folded into `street_range`
+  as a house-number range; fixed after review, see §7.
 - **ENA planned — both distinct real texts (rows 2 and 18):** 99 and 113
   announcements respectively, **100% `parse_status="ok"`** — every
   region/time chunk across both confirmed and preliminary day-blocks
@@ -244,7 +269,3 @@ once this is reviewed:
 - Localizing `starts_at`/`ends_at` to `Asia/Yerevan` (parsers currently
   return naive datetimes; Django's `USE_TZ=True` setting means the
   processing layer needs to attach the zone explicitly, not the parser).
-- Wiring `common.enums.Provider` into `ingestion/models.py` (two-line
-  change: import from `common.enums` instead of defining locally — safe,
-  no migration needed since choices are baked into migration files as
-  plain tuples, not class references).

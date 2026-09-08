@@ -10,6 +10,25 @@ name with no number is a whole street/area on its own, and trailing
 words after a number-expr may carry a building-type descriptor (ignored
 for matching) or a parity word (kept).
 
+Street numbers vs. house numbers (fixed, see the processing plan doc):
+  Some outlying districts (Նոր Արեշ, Վարդաշեն, Մուշական, ...) number
+  their *streets* rather than naming them, so "Նոր Արեշ 12, 14
+  փողոցների" means streets 12 and 14 of the Nor Aresh area, not house
+  numbers 12/14 on a street literally named "Նոր Արեշ". Rather than
+  hardcode a list of which districts do this (incomplete and brittle —
+  ENA/Veolia could add more at any time), the source text already
+  marks it grammatically: a number-group whose trailing word is a
+  "streets" noun (`փողոց`/`փողոցի`/`փողոցներ`/`փողոցների`) rather than
+  a building noun (`շենք(եր)(ի)`, `առանձնատներ`) is a street-number
+  range, not a house range. Since that trailing word can land on the
+  *last* item of a multi-item run sharing one street name (e.g. "Նոր
+  Արեշ 12, 14 փողոցների" — "12" and "14 փողոցների" are two comma
+  items), detection needs the whole run of numeric items under one
+  street name, not just one item in isolation — see `_flush_clause`.
+  Residual limitation: if a numbered-street list is ever phrased
+  without that trailing word, this still misclassifies as a house
+  range. No real example of that gap has been seen so far.
+
 Known, documented simplifications (see the processing plan doc):
   - Parity words found together with a number apply to that item only.
     A parity word trailing a whole comma-list (no number of its own)
@@ -40,7 +59,8 @@ from enum import Enum
 class LocationKind(str, Enum):
     WHOLE_AREA = "whole_area"      # settlement, quarter, or district — no street
     WHOLE_STREET = "whole_street"  # a named street with no number given
-    STREET_RANGE = "street_range"  # a street + a single number or a range
+    STREET_RANGE = "street_range"  # a street + a house number or house-number range
+    STREET_NUMBER_RANGE = "street_number_range"  # a numbered-street area + a street-number or range (not house numbers)
     UNPARSED = "unparsed"          # raw fragment kept, nothing structured
 
 
@@ -69,6 +89,14 @@ class ParsedLocation:
 _WAY_TYPE_WORDS = ("փողոց", "փող", "պողոտա", "պող", "խճուղի", "խճ", "նրբանցք", "նրբ", "փակուղի", "փակ")
 _BUILDING_TYPE_WORDS = ("շենք", "շենքեր", "շենքերի", "շենք1", "առանձնատուն", "առանձնատներ", "տների")
 _AREA_TYPE_WORDS = ("գյուղ", "գյուղի", "թաղամաս", "թաղամասի")
+# Trailing "streets" noun (not a way-type suffix on a name — this is the
+# plural/genitive noun describing what the preceding numbers *are*,
+# e.g. "12, 14 փողոցների" = "streets 12, 14"). Overlaps in stem with
+# _WAY_TYPE_WORDS, which strips "փող."-style suffixes off names instead
+# — the two lists are used in different roles, not merged, since a name
+# suffix and a trailing "these numbers are streets" noun are different
+# grammatical jobs even though they share a root word.
+_STREET_NUMBER_WORDS = ("փողոցների", "փողոցներ", "փողոցի", "փողոց")
 _PARITY_WORDS = {"զույգ": Parity.EVEN, "կենտ": Parity.ODD}
 
 _NUMBER_TOKEN_RE = re.compile(r"^(\d+)(?:/(\d+))?([Ա-Ֆաֆ]?)$")
@@ -115,6 +143,16 @@ def _detect_parity(text: str) -> Parity:
     return Parity.ANY
 
 
+@dataclasses.dataclass
+class _PendingNumericItem:
+    raw_fragment: str
+    low: int
+    low_sub: str | None
+    high: int
+    high_sub: str | None
+    after_part: str
+
+
 def parse_address_list(raw_text: str) -> list[ParsedLocation]:
     """
     Parse a comma-separated location list (already isolated from the
@@ -126,6 +164,37 @@ def parse_address_list(raw_text: str) -> list[ParsedLocation]:
 
     results: list[ParsedLocation] = []
     current_street: str | None = None
+    pending_clause: list[_PendingNumericItem] = []
+
+    def flush_clause() -> None:
+        """
+        Finalize the buffered run of numeric items under the current
+        street name. Buffered (rather than emitted item-by-item) because
+        the street-vs-house-number trailing word can land on the last
+        item of the run rather than every item in it — see module
+        docstring.
+        """
+        if not pending_clause:
+            return
+        is_street_numbering = any(_has_word(p.after_part, _STREET_NUMBER_WORDS) for p in pending_clause)
+        kind = LocationKind.STREET_NUMBER_RANGE if is_street_numbering else LocationKind.STREET_RANGE
+        for p in pending_clause:
+            results.append(
+                ParsedLocation(
+                    raw_fragment=p.raw_fragment,
+                    kind=kind,
+                    street=current_street,
+                    house_low=p.low,
+                    house_low_sub=p.low_sub,
+                    house_high=p.high,
+                    house_high_sub=p.high_sub,
+                    # Parity is a house-numbering concept (odd/even side
+                    # of a street) — meaningless for street numbers, so
+                    # it's only ever detected for a genuine house range.
+                    parity=_detect_parity(p.after_part) if kind == LocationKind.STREET_RANGE else Parity.ANY,
+                )
+            )
+        pending_clause.clear()
 
     for raw_item in items:
         item = raw_item
@@ -150,6 +219,8 @@ def parse_address_list(raw_text: str) -> list[ParsedLocation]:
                 # to do; see module docstring on retroactive parity.
                 continue
 
+            flush_clause()  # a new name always ends the previous street's numeric run
+
             name = item
             is_area = _has_word(name, _AREA_TYPE_WORDS)
             clean_name = _strip_words(name, _AREA_TYPE_WORDS if is_area else _WAY_TYPE_WORDS)
@@ -168,10 +239,12 @@ def parse_address_list(raw_text: str) -> list[ParsedLocation]:
         parsed = _parse_number_expr(match.group(0))
 
         if parsed is None:
+            flush_clause()
             results.append(ParsedLocation(raw_fragment=raw_item, kind=LocationKind.UNPARSED, is_matchable=False))
             continue
 
         if name_part:
+            flush_clause()  # a new named street always ends the previous one's numeric run
             current_street = _strip_words(name_part, _WAY_TYPE_WORDS) or name_part
 
         if current_street is None:
@@ -181,17 +254,7 @@ def parse_address_list(raw_text: str) -> list[ParsedLocation]:
             continue
 
         low, low_sub, high, high_sub = parsed
-        results.append(
-            ParsedLocation(
-                raw_fragment=raw_item,
-                kind=LocationKind.STREET_RANGE,
-                street=current_street,
-                house_low=low,
-                house_low_sub=low_sub,
-                house_high=high,
-                house_high_sub=high_sub,
-                parity=_detect_parity(after_part),
-            )
-        )
+        pending_clause.append(_PendingNumericItem(raw_item, low, low_sub, high, high_sub, after_part))
 
+    flush_clause()
     return results

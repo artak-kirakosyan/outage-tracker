@@ -98,6 +98,37 @@ def test_known_real_examples_parse_as_expected():
     assert result[0].kind == LocationKind.WHOLE_AREA
     assert result[0].street == "Կոռնիձոր"
 
+    # V-4: numbered-street area, single-item range — the trailing
+    # "streets" noun lands on the same item as the range.
+    result = parse_address_list_of("Վարդաշեն 1-12 փողոցների, Մուշական 1-11 փողոցների")
+    assert result[0].kind == LocationKind.STREET_NUMBER_RANGE
+    assert result[0].street == "Վարդաշեն" and result[0].house_low == 1 and result[0].house_high == 12
+    assert result[1].kind == LocationKind.STREET_NUMBER_RANGE
+    assert result[1].street == "Մուշական"
+
+    # V-3 real example (previously misparsed, see review): the trailing
+    # "streets" noun lands on the *last* comma item only ("14
+    # փողոցների"), and must still reclassify the *first* item ("Նոր
+    # Արեշ 12", no trailing word of its own) as a street number too —
+    # this is exactly why the numeric items are buffered per clause
+    # instead of classified item-by-item.
+    result = parse_address_list_of("Ազատամարտիկների Պող., Ռոստովյան, Նոր Արեշ 12, 14 փողոցների")
+    assert result[0].kind == LocationKind.WHOLE_STREET and result[0].street == "Ազատամարտիկների Պող"
+    assert result[1].kind == LocationKind.WHOLE_STREET and result[1].street == "Ռոստովյան"
+    assert result[2].kind == LocationKind.STREET_NUMBER_RANGE
+    assert result[2].street == "Նոր Արեշ" and result[2].house_low == 12
+    assert result[3].kind == LocationKind.STREET_NUMBER_RANGE
+    assert result[3].street == "Նոր Արեշ" and result[3].house_low == 14
+    # parity is a house-numbering concept — must never apply to street numbers
+    assert result[2].parity == Parity.ANY and result[3].parity == Parity.ANY
+
+    # Control: a genuine house range (trailing "buildings" noun, not
+    # "streets") must still classify as STREET_RANGE, unaffected by the
+    # street-number fix above.
+    result = parse_address_list_of("Կ. Ուլնեցու 1-62/3 շենքերի")
+    assert result[0].kind == LocationKind.STREET_RANGE
+    assert result[0].house_low == 1 and result[0].house_high == 62 and result[0].house_high_sub == "3"
+
 
 def parse_address_list_of(text: str):
     from processing.address_grammar import parse_address_list
