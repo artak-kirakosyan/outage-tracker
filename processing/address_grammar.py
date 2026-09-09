@@ -29,6 +29,20 @@ Street numbers vs. house numbers (fixed, see the processing plan doc):
   without that trailing word, this still misclassifies as a house
   range. No real example of that gap has been seen so far.
 
+Ordinal numbered-quarter names (fixed, see the processing plan doc):
+  ENA's data confirms a "N-րդ <noun>" ordinal shape for numbered
+  quarters/blocks, e.g. "Նոր Նորք 8-րդ զանգված" ("Nor Nork, 8th
+  block"). Without special handling, `_NUMBER_EXPR_RE` would match the
+  bare "8" as if it were a house number, silently dropping "զանգված"
+  (and anything chained after it) into the discarded parity-detection
+  text — misparsing, not just failing to parse. Detected via a literal
+  "-րդ" immediately after the matched digits and routed through the
+  name-handling branch instead, so the ordinal stays attached to the
+  area name it actually describes. Not yet observed in real Veolia
+  data (only in ENA's, which isn't decomposed through this grammar at
+  all — see ena_planned.py), but the same numbered Yerevan districts
+  appear in both sources, so it's handled defensively here.
+
 Known, documented simplifications (see the processing plan doc):
   - Parity words found together with a number apply to that item only.
     A parity word trailing a whole comma-list (no number of its own)
@@ -88,7 +102,7 @@ class ParsedLocation:
 # since Veolia's own text is consistently capitalized on these.
 _WAY_TYPE_WORDS = ("փողոց", "փող", "պողոտա", "պող", "խճուղի", "խճ", "նրբանցք", "նրբ", "փակուղի", "փակ")
 _BUILDING_TYPE_WORDS = ("շենք", "շենքեր", "շենքերի", "շենք1", "առանձնատուն", "առանձնատներ", "տների")
-_AREA_TYPE_WORDS = ("գյուղ", "գյուղի", "թաղամաս", "թաղամասի")
+_AREA_TYPE_WORDS = ("գյուղ", "գյուղի", "թաղամաս", "թաղամասի", "զանգված", "զանգվածի")
 # Trailing "streets" noun (not a way-type suffix on a name — this is the
 # plural/genitive noun describing what the preceding numbers *are*,
 # e.g. "12, 14 փողոցների" = "streets 12, 14"). Overlaps in stem with
@@ -99,9 +113,9 @@ _AREA_TYPE_WORDS = ("գյուղ", "գյուղի", "թաղամաս", "թաղամ�
 _STREET_NUMBER_WORDS = ("փողոցների", "փողոցներ", "փողոցի", "փողոց")
 _PARITY_WORDS = {"զույգ": Parity.EVEN, "կենտ": Parity.ODD}
 
-_NUMBER_TOKEN_RE = re.compile(r"^(\d+)(?:/(\d+))?([Ա-Ֆաֆ]?)$")
+_NUMBER_TOKEN_RE = re.compile(r"^(\d+)(?:/(\d+))?([Ա-Ֆա-ֆ]?)$")
 # One number expression: "20", "1-2", "2/1-2/6", "4Ա", "58-58/4", "67-80/2".
-_NUMBER_EXPR_RE = re.compile(r"\d+(?:/\d+)?[Ա-Ֆաֆ]?(?:-\d+(?:/\d+)?[Ա-Ֆաֆ]?)?")
+_NUMBER_EXPR_RE = re.compile(r"\d+(?:/\d+)?[Ա-Ֆա-ֆ]?(?:-\d+(?:/\d+)?[Ա-Ֆա-ֆ]?)?")
 
 
 def _parse_number_token(token: str) -> tuple[int, str | None] | None:
@@ -208,6 +222,13 @@ def parse_address_list(raw_text: str) -> list[ParsedLocation]:
 
         match = _NUMBER_EXPR_RE.search(item)
 
+        # Ordinal marker ("8-րդ" = "8th"), e.g. a numbered quarter like
+        # "Նոր Նորք 8-րդ զանգված" — not a house/street number. See
+        # module docstring; without this, the bare digit would be
+        # misread as a number and the rest of the name discarded.
+        if match is not None and item[match.end():match.end() + 3] == "-րդ":
+            match = None
+
         if match is None:
             # No number anywhere in this item: either a pure parity/
             # qualifier fragment, or a bare street/area name.
@@ -219,7 +240,7 @@ def parse_address_list(raw_text: str) -> list[ParsedLocation]:
                 # to do; see module docstring on retroactive parity.
                 continue
 
-            flush_clause()  # a new name always ends the previous street's numeric run
+            flush_clause()
 
             name = item
             is_area = _has_word(name, _AREA_TYPE_WORDS)
@@ -244,7 +265,7 @@ def parse_address_list(raw_text: str) -> list[ParsedLocation]:
             continue
 
         if name_part:
-            flush_clause()  # a new named street always ends the previous one's numeric run
+            flush_clause()
             current_street = _strip_words(name_part, _WAY_TYPE_WORDS) or name_part
 
         if current_street is None:

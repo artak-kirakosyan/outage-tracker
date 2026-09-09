@@ -60,6 +60,46 @@ def test_marz_extraction_on_known_real_example():
     assert any("Այգեզարդ" in r.raw_address_text for r in ararat)
 
 
+def _day_block(month: str, day: int, suffix: str) -> str:
+    """Build a minimal but structurally real confirmed day-block: same
+    opening-sentence / region-heading / time-window shape as the real
+    fixtures, with only the date and a throwaway address varying."""
+    return (
+        "«Հայաստանի էլեկտրական ցանցեր» ընկերությունը տեղեկացնում է, որ "
+        f"{month} {day}-ին պլանային նորոգման աշխատանքներ իրականացնելու "
+        "նպատակով ժամանակավորապես կդադարեցվի հետևյալ հասցեների "
+        "էլեկտրամատակարարումը՝\n"
+        "Կոտայքի մարզ՝\n"
+        "10:00-12:00\n"
+        f"Թեստային փողոց {suffix},\n"
+    )
+
+
+def test_year_rolls_over_across_a_december_january_boundary():
+    """
+    Regression: parse_planned_section() previously applied the single
+    `year` argument to every day-block on the page uniformly. A page
+    fetched near a year boundary can legitimately contain both a
+    December day-block and a January one (ENA's own day-blocks already
+    span a week-plus ahead in real data — see row_18's Sep 7->14 range)
+    — without rollover detection, the January block would silently get
+    the wrong (December's) year.
+    """
+    text = _day_block("դեկտեմբերի", 30, "1") + "\n****************\n" + _day_block("հունվարի", 3, "2")
+    results = parse_planned_section(normalize_multiline(text), year=2026)
+    dates = sorted({r.date for r in results if r.date})
+    assert dates == [datetime.date(2026, 12, 30), datetime.date(2027, 1, 3)]
+
+
+def test_no_rollover_within_a_single_month_span():
+    """Companion to the rollover test: dates that stay within the same
+    (or a later, same-year) month must not trigger a bump."""
+    text = _day_block("սեպտեմբերի", 4, "1") + "\n****************\n" + _day_block("սեպտեմբերի", 7, "2")
+    results = parse_planned_section(normalize_multiline(text), year=2026)
+    dates = sorted({r.date for r in results if r.date})
+    assert dates == [datetime.date(2026, 9, 4), datetime.date(2026, 9, 7)]
+
+
 def test_reports_coverage():
     print()
     for label, raw in TEXTS.items():

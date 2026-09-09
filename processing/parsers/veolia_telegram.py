@@ -4,10 +4,15 @@ Parses one Veolia Telegram post (see outage-data-patterns-v2.md section
 
 Scope note: every real post seen so far (40/40) is an emergency
 announcement — no planned-outage wording has ever been observed on this
-channel. This parser always sets outage_type="emergency"; if a planned
-post ever appears, its wording is unconfirmed and this parser will very
-likely fail to match the body regex and land in parse_status="failed"
-rather than silently mis-parsing it as emergency.
+channel. This parser unconditionally sets outage_type="emergency" on
+every return path, including "partial"/"failed" ones — it does not
+actually detect planned-outage wording. If a planned post ever appears
+with a headline that doesn't say "Վթարային" but a body that still
+happens to match the generic time/address template below, it would be
+recorded as "emergency" with parse_status="partial" rather than being
+caught. Not fixed here since outage_type accuracy isn't load-bearing at
+this stage (nothing downstream reads it yet) — noted so it isn't
+assumed to be safer than it is once that changes.
 """
 import dataclasses
 import datetime as dt

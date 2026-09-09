@@ -130,6 +130,41 @@ def test_known_real_examples_parse_as_expected():
     assert result[0].house_low == 1 and result[0].house_high == 62 and result[0].house_high_sub == "3"
 
 
+def test_ordinal_numbered_quarter_is_not_misparsed_as_house_number():
+    """
+    Regression: "Նոր Նորք 8-րդ զանգված" (a numbered quarter, "8th
+    block") was previously matched by _NUMBER_EXPR_RE on the bare "8",
+    misclassifying the whole item as a house range and silently
+    dropping "զանգված" — and, in a denser real item, whatever followed
+    it — into the discarded parity-detection text. Confirmed real ENA
+    vocabulary (see phase-1-processing-plan.md); not yet observed in
+    Veolia's own data, but the same numbered Yerevan districts appear
+    in both sources, so this is a defensive fix, not a confirmed-real
+    Veolia example.
+    """
+    result = parse_address_list_of("Նոր Նորք 8-րդ զանգված, Ազատության 10")
+    assert result[0].kind == LocationKind.WHOLE_AREA
+    assert result[0].street == "Նոր Նորք 8-րդ"
+    assert result[1].street == "Ազատության"
+    assert result[1].house_low == 10
+
+
+def test_lowercase_letter_suffix_is_recognized_like_uppercase():
+    """
+    Regression: the letter-suffix character class was missing a hyphen
+    on its lowercase side (`[Ա-Ֆաֆ]` instead of `[Ա-Ֆա-ֆ]`), so it only
+    matched the two literal characters 'ա' and 'ֆ' instead of the full
+    lowercase range — a mid-alphabet letter like 'գ' silently failed to
+    parse as a sub-suffix. All real examples seen so far use uppercase
+    suffixes (e.g. "1-29Ա"), so this never surfaced in the fixture data;
+    asserting both cases here so the two stay in sync going forward.
+    """
+    upper = parse_address_list_of("Կ. Ուլնեցու 1-29Ա Շենքերի")
+    lower = parse_address_list_of("Կ. Ուլնեցու 1-29գ Շենքերի")
+    assert upper[0].house_high == 29 and upper[0].house_high_sub == "Ա"
+    assert lower[0].house_high == 29 and lower[0].house_high_sub == "գ"
+
+
 def parse_address_list_of(text: str):
     from processing.address_grammar import parse_address_list
     from processing.normalize import normalize_text

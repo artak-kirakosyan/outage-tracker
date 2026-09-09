@@ -144,7 +144,8 @@ first_seen_at / last_seen_at
 OutageLocation  (FK -> OutageAnnouncement; Veolia only in v1 — see §4)
 ------------------------------------------------
 raw_fragment               (verbatim comma-item text)
-kind                        (whole_area | whole_street | street_range | unparsed)
+kind                        (whole_area | whole_street | street_range |
+                             street_number_range | unparsed)
 street                       (nullable)
 house_low / house_low_sub      (int / nullable string — "1", "2Ա", etc.)
 house_high / house_high_sub
@@ -229,11 +230,47 @@ without creating duplicate announcements.
   isn't decomposed at all (§4) — documented here as the rule to use
   *when* that parser is built: apply to the immediately preceding item
   only, never assume it back-propagates across a comma.
+- **Letter-suffix character class bug, fixed after review:**
+  `address_grammar.py`'s number regexes used `[Ա-Ֆաֆ]` for the
+  optional building-letter suffix (`4Ա`, `1-29Ա`) — missing a hyphen on
+  the lowercase side, so it matched the *literal* characters `ա`/`ֆ`
+  instead of the full lowercase range `ա-ֆ`. Every real example seen so
+  far uses an uppercase suffix, so this was inert against the collected
+  data, but a lowercase suffix would have silently failed to parse as a
+  sub. Fixed to `[Ա-Ֆա-ֆ]`, matching the pattern already used correctly
+  elsewhere (`_has_word`'s `[Ա-֏]`); regression test added for both cases.
+- **Ordinal numbered-quarter names, fixed after review:** ENA's data
+  confirms a `N-րդ <noun>` ordinal shape for numbered quarters/blocks
+  (`Նոր Նորք 8-րդ զանգված` = "Nor Nork, 8th block"). Without special
+  handling, the bare digit before `-րդ` would be misread as a house
+  number by `address_grammar.py`, silently dropping the noun (and
+  anything chained after it in a denser real item) rather than
+  surfacing as `unparsed`. Not yet observed in real Veolia data — only
+  in ENA's, which this grammar doesn't apply to — but handled
+  defensively since the same numbered Yerevan districts appear in both
+  sources. `զանգված`/`զանգվածի` also added to the area-type vocabulary.
+- **Year rollover across a December/January boundary, fixed after
+  review:** `ena_planned.parse_planned_section()` previously applied
+  its single `year` argument to every day-block on the page uniformly.
+  A page fetched near year-end can legitimately contain both a
+  December day-block and a January one (real data already shows
+  day-blocks spanning a week-plus ahead — row_18's Sep 7→14), so a
+  January block would have silently gotten the wrong year. Fixed by
+  tracking each block's month in source order and bumping the running
+  year on any month-number decrease; only handles a single forward
+  rollover per page (not a general calendar solver). The equivalent
+  caveat already existed on `veolia_telegram.parse_post()`'s `year`
+  parameter but was never actually handled there either — still open,
+  not fixed in this pass.
 
 ## 8. Test results (against real data)
 
-50 tests, all passing, run against every distinct real sample in the
-uploaded db (not synthetic fixtures):
+54 tests, all passing, run against every distinct real sample in the
+uploaded db (not synthetic fixtures), plus four synthetic regression
+tests added after review for the fixes in §7 that had no real-data
+example to test against (letter-suffix case, ordinal numbered-quarter
+name, and the December/January rollover — both a rollover case and a
+same-year control):
 
 - **Veolia — all 40 distinct posts:** every post reaches at least
   `parse_status="partial"`; all 40 reach `"ok"` (headline region + date +

@@ -177,12 +177,39 @@ def parse_planned_section(text: str, *, year: int) -> list[EnaPlannedAnnouncemen
     under the "Պլանային անջատումներ" heading. Newlines are collapsed
     here since ENA's own <br> placement wraps headings arbitrarily
     mid-phrase and carries no semantic meaning.
+
+    year: the calendar year to attach to day-blocks that don't state
+    one (ENA never does). Day-blocks on one page are chronologically
+    ordered, so if a later block's month number is *lower* than an
+    earlier one's, that's a December->January rollover — the year is
+    bumped by 1 from that block onward. This only detects a single
+    forward rollover within one page fetch; it isn't a general
+    calendar solver (e.g. it would misread a page that genuinely jumps
+    backward in date order, which hasn't been observed).
     """
     flat = re.sub(r"\s+", " ", text).strip()
 
     segments = [s.strip() for s in _ASTERISK_DIVIDER_RE.split(flat) if s.strip()]
 
     results: list[EnaPlannedAnnouncement] = []
+    effective_year = year
+    last_month: int | None = None
+
+    def block_year(block_text: str) -> int:
+        """Bump the running year on a detected Dec->Jan rollover, using
+        the same opening-sentence regex `_parse_day_block` will
+        independently re-match — kept as a separate lookup rather than
+        threading state into that (deliberately stateless) function."""
+        nonlocal effective_year, last_month
+        opening = _OPENING_SENTENCE_RE.search(block_text)
+        if opening:
+            month = MONTHS_GENITIVE.get(opening.group("month").lower())
+            if month is not None:
+                if last_month is not None and month < last_month:
+                    effective_year += 1
+                last_month = month
+        return effective_year
+
     for segment in segments:
         if _PRELIMINARY_HEADER_RE.search(segment):
             sub_segments = _DATE_HEADING_SPLIT_RE.split(segment)
@@ -190,8 +217,8 @@ def parse_planned_section(text: str, *, year: int) -> list[EnaPlannedAnnouncemen
                 sub = sub.strip()
                 if not sub or _PRELIMINARY_HEADER_RE.match(sub):
                     continue
-                results.extend(_parse_day_block(sub, is_preliminary=True, year=year))
+                results.extend(_parse_day_block(sub, is_preliminary=True, year=block_year(sub)))
         else:
-            results.extend(_parse_day_block(segment, is_preliminary=False, year=year))
+            results.extend(_parse_day_block(segment, is_preliminary=False, year=block_year(segment)))
 
     return results
