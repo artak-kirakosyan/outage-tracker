@@ -158,15 +158,21 @@ Split into three slices; only the first is done.
   `Հ. Մալյան/Արաբկիր 45 փող.` is a renamed-street annotation, not a
   second address.
 
-### 5.2 Structured storage — Not started
+### 5.2 Structured storage — Done
 
 - `processing/models.py` — `OutageAnnouncement` / `OutageLocation`
   Django models + migration.
 - `process_raw_content` management command tying `RawContent.processed`
   to the parsers above, using the idempotency keys already designed
-  (Telegram's `data-post` id for Veolia; a content hash for ENA).
-- Localizing parsed `starts_at`/`ends_at` (currently naive) to
-  `Asia/Yerevan`.
+  (Telegram's `data-post` id for Veolia; a content hash for ENA), wired
+  into `run_scheduler` on its own interval.
+- `starts_at`/`ends_at` localized to `Asia/Yerevan` in the command.
+- `processing/html_extract.py` — a previously-undocumented gap found
+  during implementation: neither parser actually operates on the full
+  page HTML `RawContent.content` stores; this module splits/extracts
+  the section or posts each parser expects. See
+  `docs/phase-1-processing-plan.md` §9 for the full writeup, including
+  the caveat that the ENA extractor is unverified against a live fetch.
 
 ### 5.3 Users, matching, notifications — Not started
 

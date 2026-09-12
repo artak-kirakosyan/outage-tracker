@@ -57,6 +57,14 @@ class Command(BaseCommand):
             disabled_note = "" if getattr(settings, enabled_setting) else " (disabled)"
             self.stdout.write(f"Scheduling {job.name} every {job.interval_seconds // 60} min{disabled_note}")
 
+        process_job = Job(
+            "process_raw_content",
+            lambda: call_command("process_raw_content"),
+            settings.PROCESS_RAW_CONTENT_INTERVAL_MINUTES * 60,
+        )
+        jobs.append(process_job)
+        self.stdout.write(f"Scheduling {process_job.name} every {process_job.interval_seconds // 60} min")
+
         stop_event = threading.Event()
         threads = start_scheduler(jobs, stop_event)
 
