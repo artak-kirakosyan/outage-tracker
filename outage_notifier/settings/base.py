@@ -110,6 +110,11 @@ VEOLIA_TELEGRAM_FETCH_INTERVAL_MINUTES = int(
     os.environ.get("VEOLIA_TELEGRAM_FETCH_INTERVAL_MINUTES", "15")
 )
 
+# process_raw_content is local-DB-only work (no external site to be
+# polite to), so it defaults to a much shorter interval than the
+# fetchers above.
+PROCESS_RAW_CONTENT_INTERVAL_MINUTES = int(os.environ.get("PROCESS_RAW_CONTENT_INTERVAL_MINUTES", "5"))
+
 def _env_bool(name: str, default: bool) -> bool:
     return os.environ.get(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
 

@@ -293,16 +293,48 @@ Not yet run against a live fetch — same caveat as Phase 0.5's README:
 this sandbox can't reach `ena.am` or `t.me`, so this is validated
 against the historical data in the uploaded db, not a fresh live pull.
 
-## 9. What's still not built (next step)
+## 9. Structured storage — Done
 
-Per the agreed two-step split, this covers parsing only. Still to do,
-once this is reviewed:
+Built on branch `phase-1/structured-storage`:
 
-- `processing/models.py` — the actual Django models for
-  `OutageAnnouncement`/`OutageLocation`, migration.
-- `process_raw_content` management command (or similar) tying
-  `RawContent.processed` to the parsers above, using the idempotency
-  keys from §6, and setting `last_seen_at` on repeat matches.
-- Localizing `starts_at`/`ends_at` to `Asia/Yerevan` (parsers currently
-  return naive datetimes; Django's `USE_TZ=True` setting means the
-  processing layer needs to attach the zone explicitly, not the parser).
+- `processing/models.py` — `OutageAnnouncement`/`OutageLocation` +
+  migration, per the schema in §5. `provider`/`kind`/`parity` choices
+  are built from the existing `common.enums.Provider` and
+  `address_grammar.LocationKind`/`Parity` rather than re-declared.
+- `process_raw_content` management command, using the idempotency keys
+  from §6 (`get_or_create` on `(provider, external_ref)`, `last_seen_at`
+  bumped on repeat sightings), wired into `run_scheduler` on its own
+  interval (`PROCESS_RAW_CONTENT_INTERVAL_MINUTES` — no enabled/disabled
+  flag, unlike the fetchers, since it's local-DB-only work).
+- `starts_at`/`ends_at` are localized to `Asia/Yerevan` in the command
+  (`django.utils.timezone.make_aware`), not the parsers, per the plan
+  above. The command also uses the *localized* year
+  (`timezone.localtime(raw.fetched_at).year`) rather than the raw
+  UTC-backed `fetched_at.year` when calling the parsers, to avoid a
+  fetch near midnight UTC landing on the wrong calendar year.
+
+**Gap found and fixed during implementation, not previously documented
+here:** neither parser actually operates on what `RawContent.content`
+stores. `parse_planned_section()` expects the already-isolated text of
+the `attenbody` element, and `parse_post()` expects one already-split-out
+Telegram post — but `RawContent.content` for both providers is the
+*entire* fetched HTML page. `processing/html_extract.py` is the missing
+middle step (BeautifulSoup-based, new `beautifulsoup4` dependency): it
+pulls the `attenbody` section out of ENA's page and splits Veolia's
+preview page into individual `(data-post id, post text)` pairs before
+either parser ever sees the text. The Veolia extractor is trusted
+against real markup (Telegram's public preview format, matching
+`ingestion/tests/fixtures/veolia_telegram_sample.html`); the ENA
+extractor's `attenbody`-id lookup is a best-effort guess with no real
+fetched sample to verify against in this environment — same
+"unverified against a live fetch" caveat as the rest of this project,
+flagged in its own docstring. Confirm it against a live ENA fetch before
+trusting it in production.
+
+Also fixed while in the area: `ingestion/tests/fixtures/veolia_telegram_sample.html`
+now includes the closing boilerplate sentence every real post has —
+this was `docs/data-patterns.md` §2.2's outstanding action item.
+
+Not built yet, deliberately out of scope for this slice (see
+`docs/project-plan.md` §5.3): `Address`/`User` models, the bot rewrite,
+matching, notifications.

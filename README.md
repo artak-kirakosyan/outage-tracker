@@ -6,13 +6,16 @@ Nationwide utility outage tracking & notification system for Armenia
 - **Phase 0.5 (done):** raw ingestion — fetch ENA/Veolia, store every
   fetch verbatim. No parsing, no users, no matching, no notifications.
   See `docs/phase-0.5-plan.md`.
-- **Phase 1, raw→structured slice (done):** parses `RawContent` rows
+- **Phase 1, raw→structured parsing (done):** parses `RawContent` rows
   (ENA's planned-outage prose, Veolia's Telegram posts) into structured
-  announcements/locations — pure parsing functions only, not yet wired
-  into any DB model. See `docs/phase-1-processing-plan.md`.
-- **Not yet built:** the `OutageAnnouncement`/`OutageLocation` models
-  and the management command that ties the parsers above to
-  `RawContent`, plus Users/Addresses, matching, and notifications.
+  announcements/locations. See `docs/phase-1-processing-plan.md`.
+- **Phase 1, structured storage (done):** `OutageAnnouncement`/
+  `OutageLocation` models, the `process_raw_content` command that ties
+  the parsers to `RawContent` (including an HTML-extraction step the
+  parsers need but didn't have — see the plan doc §9), and the
+  scheduler job that runs it.
+- **Not yet built:** Users/Addresses, matching, notifications, and the
+  Telegram CRUD bot — see `docs/project-plan.md` §5.3.
 
 ## Stack
 
@@ -46,14 +49,21 @@ Nationwide utility outage tracking & notification system for Armenia
   same pattern as the old repo's `DUMP_DIRECTORY`.
 - Django admin, registered for `RawContent`, for browsing what's been
   collected without writing SQL.
-- `processing` — parses `RawContent` into structured data (not yet
-  persisted to a model; see `docs/phase-1-processing-plan.md`):
+- `processing` — parses and persists structured outage data (see
+  `docs/phase-1-processing-plan.md`):
+  - `html_extract.py` — pulls the section/posts each parser below
+    expects out of the full page HTML `RawContent.content` actually
+    stores (§9 — a gap the original parsing-only slice didn't cover).
   - `parsers.veolia_telegram` — full structured parse of a Telegram
     post: marz/district, time window, and each address decomposed into
     street/range/parity (`address_grammar.py`).
   - `parsers.ena_planned` — shallow parse of ENA's planned-outage
     prose: date/region/time window structured, address text kept
     verbatim (deliberately not decomposed — see the plan doc §4).
+  - `models.py` — `OutageAnnouncement`/`OutageLocation`.
+  - `process_raw_content` management command — ties the above together
+    against `RawContent.processed`, idempotent across overlapping
+    fetches (§6), also run by `run_scheduler`.
 
 ## ⚠️ Known limitation of this build environment
 
@@ -149,13 +159,22 @@ ingestion/               # raw fetch -> RawContent (Phase 0.5)
     fetch_veolia_telegram.py
     run_scheduler.py
   tests/
-processing/              # RawContent -> structured data (Phase 1, parsing slice)
+processing/              # RawContent -> structured data (Phase 1)
   normalize.py             # nbsp/dash/whitespace normalization
   armenian_dates.py         # month-name -> number lookup, shared
   address_grammar.py         # Veolia's comma-list grammar (street/range/parity)
+  html_extract.py             # splits/extracts what each parser below expects
+                                # out of the full page HTML RawContent stores
   parsers/
     veolia_telegram.py         # full structured parse
     ena_planned.py              # shallow parse — see plan doc §4 for why
+  idempotency.py               # external_ref computation (ENA hash; Veolia
+                                # uses the real data-post id directly)
+  models.py                     # OutageAnnouncement, OutageLocation
+  admin.py
+  migrations/
+  management/commands/
+    process_raw_content.py        # ties RawContent -> the models above
   tests/
 docs/
   phase-0.5-plan.md      # detailed plan + Phase 1 prep notes
@@ -165,9 +184,6 @@ scripts/
 ```
 
 Deliberately **not** built yet, but anticipated in this layout so later
-phases don't require reshuffling: `bot/` (Telegram CRUD bot), the actual
-`OutageAnnouncement`/`OutageLocation` Django models plus the management
-command that persists `processing`'s parser output against `RawContent`,
-`matching/` (address ↔ outage), `notifications/` (send + log). See
-`docs/phase-1-processing-plan.md` §9 for what's left on the processing
-side specifically.
+phases don't require reshuffling: `bot/` (Telegram CRUD bot),
+`Address`/`User` models, `matching/` (address ↔ outage), `notifications/`
+(send + log). See `docs/project-plan.md` §5.3.
