@@ -20,6 +20,14 @@ def ena_external_ref(announcement: EnaPlannedAnnouncement) -> str:
     edits an existing block's address list, the hash changes and a new
     row is created rather than the old one being updated in place --
     accepted as a known v1 limitation (see the plan doc).
+
+    is_preliminary is deliberately left out of the hash. ENA re-lists
+    the same day-block first under "preliminary information" and later,
+    unchanged, as a confirmed block -- excluding it means both sightings
+    hash to the same external_ref, so the second sighting is treated as
+    a re-confirmation of the first row rather than a duplicate second
+    row. process_raw_content.Command._process_ena downgrades the
+    existing row's is_preliminary from True to False when that happens.
     """
     parts = [
         str(announcement.date),

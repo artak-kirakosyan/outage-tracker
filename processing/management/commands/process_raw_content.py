@@ -30,15 +30,36 @@ class Command(BaseCommand):
             "announcements_touched": 0,
             "locations_created": 0,
             "extraction_failed": 0,
+            "row_errors": 0,
         }
 
         for raw in queryset:
             summary["rows"] += 1
-            with transaction.atomic():
-                if raw.provider == Provider.ENA:
-                    self._process_ena(raw, summary)
-                else:
-                    self._process_veolia(raw, summary)
+            try:
+                with transaction.atomic():
+                    if raw.provider == Provider.ENA:
+                        self._process_ena(raw, summary)
+                    else:
+                        self._process_veolia(raw, summary)
+                    raw.processed = True
+                    raw.save(update_fields=["processed"])
+            except Exception:
+                # The queryset is oldest-first and re-run every tick, so
+                # leaving a row that raises as processed=False would
+                # have it fail the same way forever, permanently
+                # blocking every newer row queued behind it. Mirrors
+                # ingestion.fetchers.runner.run_fetcher's "one target's
+                # failure must not lose the others" isolation, and the
+                # extraction_failed case just below: log it, mark the
+                # row processed so it isn't retried, move on to the
+                # next row. The row's own transaction has already
+                # rolled back by this point, so this save is separate
+                # and outside it.
+                logger.exception(
+                    "Unexpected error processing RawContent id=%s (provider=%s); marking processed to avoid blocking later rows.",
+                    raw.id, raw.provider,
+                )
+                summary["row_errors"] += 1
                 raw.processed = True
                 raw.save(update_fields=["processed"])
 
@@ -76,7 +97,18 @@ class Command(BaseCommand):
                 summary["announcements_created"] += 1
             else:
                 summary["announcements_touched"] += 1
-                obj.save(update_fields=["last_seen_at"])
+                update_fields = ["last_seen_at"]
+                # is_preliminary is deliberately not part of
+                # ena_external_ref (see its docstring), so this is the
+                # one field a re-sighting of the same hash can still
+                # legitimately change: ENA re-lists an unchanged
+                # day-block as confirmed after first showing it as
+                # preliminary. Only ever downgrade True->False, never
+                # the reverse.
+                if obj.is_preliminary and not item.is_preliminary:
+                    obj.is_preliminary = False
+                    update_fields.append("is_preliminary")
+                obj.save(update_fields=update_fields)
 
     def _process_veolia(self, raw: RawContent, summary: dict) -> None:
         posts = extract_veolia_telegram_posts(raw.content)
