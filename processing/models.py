@@ -56,6 +56,9 @@ class OutageAnnouncement(models.Model):
         ]
         indexes = [
             models.Index(fields=["provider", "starts_at"]),
+            # Supports matching.matcher's time-bounded query -- see
+            # docs/phase-1.3-users-matching-notifications-plan.md.
+            models.Index(fields=["marz", "ends_at"]),
         ]
 
     def __str__(self) -> str:

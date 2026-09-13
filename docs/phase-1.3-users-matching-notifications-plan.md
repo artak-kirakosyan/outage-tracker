@@ -10,8 +10,8 @@ and the Telegram bot CRUD flow. Branch: `phase-1.3/users-addresses`.
 |---|---|
 | `Region` enum (`common/enums.py`) | **Done** |
 | `Address`/`User` models (`accounts/`) | **Done** |
-| Matching layer | Not started |
-| `NotificationLog` model + send logic | Not started |
+| Matching layer (`matching/`) | **Done** |
+| `NotificationLog` model + compute-and-log step (`notifications/`) | **Done** |
 | Telegram bot (CRUD + delivery) | Not started |
 
 ## Decisions locked in during review
@@ -52,7 +52,12 @@ and the Telegram bot CRUD flow. Branch: `phase-1.3/users-addresses`.
   migration touching every table with a FK to `User`.
 - **Gazprom:** stays parked, unchanged from the existing phasing.
 
-## Matching layer — design notes for the next slice
+## Matching layer — implemented as designed, with one addition
+
+Built as `matching/geography.py` (canonicalization) + `matching/matcher.py`
+(pure `find_matches_for_address(address) -> list[Match]`, no persistence).
+Matches the design below exactly, plus one thing that only became clear
+while writing it:
 
 - **Geography filter:** `Address.region` vs `OutageAnnouncement.marz`, via
   the one-entry inflection map described above.
@@ -60,37 +65,72 @@ and the Telegram bot CRUD flow. Branch: `phase-1.3/users-addresses`.
   (normalized case/whitespace, not fuzzy in v1) + house-number
   range/parity check. The sub-numbered range rule (`67-80/2` → implicit
   `/1` floor) is flagged in `docs/data-patterns.md` §4 as *our own
-  assumption, not provider-confirmed* — worth carrying that uncertainty
-  into the notification copy ("possible match") rather than presenting
-  it as certain.
+  assumption, not provider-confirmed* — carried into the code as a
+  boundary-only check (interior numbers always match); `confidence="high"`.
 - **ENA planned matches** (`raw_address_text` only, no `OutageLocation`
-  rows): shipping in v1 as-is, no gating behind a beta flag. Matched by
-  substring/keyword search against the raw text instead of a structured
-  comparison, because ENA's planned block is kept as one verbatim string
-  per announcement rather than decomposed (`phase-1-processing-plan.md`
-  §4). Concretely: matching only works at street-name granularity —
-  there's no house-number range to check, so a user at house 2 and a
-  user at house 200 on the same named street both match an announcement
-  that only actually affects part of it. This means ENA-sourced
-  notifications will *over-match* (false positives on house number,
-  never on street name, never under-match). Worth a line in the
-  notification copy ("this covers part of your street — check the
-  details") so the lower confidence is legible to the user.
-- Output a `Match(address, announcement, confidence)` value, not
-  persisted directly — persistence happens in the notification step, so
-  matching stays a pure, replayable function like `processing/parsers`.
+  rows): shipped as-is, no gating. Matched by substring search against
+  the raw text — street-name granularity only, no house-number check, so
+  it *over-matches* by design (a user at house 2 and a user at house 200
+  on the same named street both match); `confidence="low"`.
+- **New: `parse_status=FAILED` announcements are excluded from matching
+  entirely.** Not in the original design — became obvious once building
+  against real code: a failed ENA parse's `raw_address_text` is the
+  *entire unparsed block* (see `ena_planned.py`'s failed branch), not a
+  real address list, so substring-matching against it would be noise,
+  not signal, and would silently produce false positives no differently
+  shaped than a real match.
+- `Match(address, announcement, confidence)` is returned, not persisted
+  — see `notifications/compute.py` for what turns it into a logged row.
 
-## Notifications — design notes for the next slice
+### Follow-up: bounding the query by time (performance)
 
-- `NotificationLog` — `user`, `address`, `outage_announcement` (FK),
-  `channel`, `sent_at`, `status`.
-- Idempotency: `get_or_create` on `(address, outage_announcement)`. A
-  `process_raw_content` re-run that only bumps an existing
-  announcement's `last_seen_at` must not re-trigger a notification.
-- Split "compute matches + log intended notifications" from "actually
-  call the Telegram API" — same reasoning as the raw/structured split:
-  the matching+dedup logic stays fully testable without a live bot token
-  or network access.
+`OutageAnnouncement` is append-only and never pruned, same as
+`RawContent` — the original `find_matches_for_address` queried it with
+only a `marz` filter, so the query got slower forever as the table
+grew, independent of how many addresses or announcements were actually
+still relevant. This wasn't caught during the original review; see the
+conversation for why (short version: nothing about correctness testing
+would surface an unbounded-growth issue, and the closest in-codebase
+precedent, `RawContent.processed`, didn't get pattern-matched against).
+
+Fixed by bounding `_relevant_announcements()` by time instead of a
+"seen it already" flag (a flag doesn't work here -- a brand-new
+`Address` still needs to be checked against an outage that's still
+ongoing, however old the row is):
+
+- An announcement with a real `ends_at` is a candidate until
+  `MATCH_END_GRACE_HOURS` (default 6) after it ends.
+- An announcement with no `ends_at` (some "partial" ENA parses never
+  get a structured end time) falls back to `last_seen_at` recency
+  within `MATCH_STALE_WITHOUT_END_DAYS` (default 3), since there's no
+  real end time to check against.
+
+Both are env-configurable settings, following the same pattern as the
+fetch-interval settings. Supported by a new `(marz, ends_at)` index on
+`OutageAnnouncement` (`processing/migrations/0002_...`) so the bounded
+query itself doesn't degrade as the historical table grows underneath
+it.
+
+**Not fixed yet, on purpose:** `notifications.compute_pending_notifications()`
+still does one `get_or_create` per matched pair rather than batching
+lookups/inserts. Once the announcement side is bounded this isn't the
+dominant cost anymore, but it's still worth doing — separate follow-up.
+
+## Notifications — implemented as designed
+
+- `notifications.NotificationLog` — `user`, `address`,
+  `outage_announcement` (FK), `channel`, `match_confidence`, `status`
+  (`pending`/`sent`/`failed`), `created_at`, `sent_at`.
+- `notifications.compute.compute_pending_notifications()` — the
+  "compute matches + log intended notifications" half, kept separate
+  from "actually call the Telegram API" as designed, so it's fully
+  testable without a live bot token. Idempotent via `get_or_create` on
+  `(address, outage_announcement)`.
+- `compute_notifications` management command runs it manually for now;
+  wiring it into `run_scheduler` (or a bot-triggered flow) is part of
+  the bot task below, not done yet.
+- Delivery (`status` transitioning to `sent`/`failed`, actually calling
+  Telegram) is intentionally not built — that's the bot's job.
 
 ## Bot — design notes for the next slice
 
