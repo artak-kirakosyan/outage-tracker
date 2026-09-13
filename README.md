@@ -14,8 +14,11 @@ Nationwide utility outage tracking & notification system for Armenia
   the parsers to `RawContent` (including an HTML-extraction step the
   parsers need but didn't have — see the plan doc §9), and the
   scheduler job that runs it.
-- **Not yet built:** Users/Addresses, matching, notifications, and the
-  Telegram CRUD bot — see `docs/project-plan.md` §5.3.
+- **Phase 1.3, users & addresses (in progress):** `Region`/`Channel`
+  enums and the `accounts.User`/`accounts.Address` models are in place.
+  See `docs/phase-1.3-users-matching-notifications-plan.md`.
+- **Not yet built:** matching, notifications, and the Telegram CRUD bot
+  — see `docs/project-plan.md` §5.3.
 
 ## Stack
 
@@ -64,6 +67,11 @@ Nationwide utility outage tracking & notification system for Armenia
   - `process_raw_content` management command — ties the above together
     against `RawContent.processed`, idempotent across overlapping
     fetches (§6), also run by `run_scheduler`.
+- `accounts` — `User` (channel-generic identity, not Telegram-specific)
+  and `Address` (no provider field; `region` is enum-backed via
+  `common.enums.Region`, other place fields are free text) — see
+  `docs/phase-1.3-users-matching-notifications-plan.md`. No CRUD yet;
+  models only.
 
 ## ⚠️ Known limitation of this build environment
 
@@ -135,7 +143,7 @@ synthetic examples.
 
 ```
 common/                 # cross-app code with no models of its own
-  enums.py               # Provider — imported by both ingestion and processing
+  enums.py               # Provider, Region, Channel — shared across apps
 outage_notifier/        # Django project (settings, urls, wsgi/asgi)
   settings/
     base.py              # shared settings — start here
@@ -176,14 +184,20 @@ processing/              # RawContent -> structured data (Phase 1)
   management/commands/
     process_raw_content.py        # ties RawContent -> the models above
   tests/
+accounts/                # Address/User models (Phase 1.3)
+  models.py               # User (channel-generic identity), Address (no provider field)
+  admin.py
+  migrations/
+  tests/
 docs/
   phase-0.5-plan.md      # detailed plan + Phase 1 prep notes
   phase-1-processing-plan.md  # scope, schema design, decisions, test results
+  phase-1.3-users-matching-notifications-plan.md  # this slice's design + locked decisions
 scripts/
   docker-entrypoint.sh
 ```
 
 Deliberately **not** built yet, but anticipated in this layout so later
 phases don't require reshuffling: `bot/` (Telegram CRUD bot),
-`Address`/`User` models, `matching/` (address ↔ outage), `notifications/`
-(send + log). See `docs/project-plan.md` §5.3.
+`matching/` (address ↔ outage), `notifications/` (send + log). See
+`docs/project-plan.md` §5.3.

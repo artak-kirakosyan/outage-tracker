@@ -34,7 +34,7 @@ We want a real system:
 | Phase | Goal | Status |
 |---|---|---|
 | **0.5** | Raw outage ingestion into storage. No parsing, no users, no notifications. | **Done** |
-| **1** | Raw → structured outage parsing (address-range logic); Users/Addresses CRUD via bot; matching + notifications + notification history. | **In progress** — raw→structured parsing slice done; models, CRUD, matching, and notifications not started |
+| **1** | Raw → structured outage parsing (address-range logic); Users/Addresses CRUD via bot; matching + notifications + notification history. | **In progress** — raw→structured parsing and storage done; `Region`/`Channel` enums and `Address`/`User` models done; matching, notifications, and the bot not started |
 | **2** | Gazprom added as a third provider via the same abstraction. | Not started |
 | **3** | Paywall/entitlements activated on the reserved extension points. | Not started |
 
@@ -174,13 +174,23 @@ Split into three slices; only the first is done.
   `docs/phase-1-processing-plan.md` §9 for the full writeup, including
   the caveat that the ENA extractor is unverified against a live fetch.
 
-### 5.3 Users, matching, notifications — Not started
+### 5.3 Users, matching, notifications — In progress
 
-- `Address`/`User` models + CRUD via a rewritten, async Telegram bot
-  (`python-telegram-bot` v20+).
-- Matching layer: address ↔ outage, using marz/district once the
-  canonical list is available.
-- Notifications: send + persist history.
+See `docs/phase-1.3-users-matching-notifications-plan.md` for the full
+design and the decisions locked in during review.
+
+- `common/enums.py` — `Region` (`YEREVAN`/`ARARAT` for now, expandable)
+  and `Channel` (`TELEGRAM` for now) added alongside `Provider`. **Done.**
+- `accounts/` — `User` (channel-generic identity: `(channel,
+  external_id)`, not a dedicated Telegram field) and `Address` (no
+  provider field — matches every provider by default; `region` is the
+  one enum-backed field, `district_or_city`/`street` are free text) +
+  migration. **Done.**
+- Matching layer: address ↔ outage, using `Region` for the geography
+  filter now that it exists. Not started.
+- `NotificationLog` model + send logic. Not started.
+- CRUD + delivery via a rewritten, async Telegram bot
+  (`python-telegram-bot` v20+). Not started.
 
 ## 6. Phases 2–3
 
@@ -193,11 +203,21 @@ Split into three slices; only the first is done.
 
 ## 7. Open Items
 
-- **Canonical marz/district/city list** — still pending; blocks
-  geographic filtering and matching.
+- **Canonical geography** — resolved as a small, expandable `Region` enum
+  (`common/enums.py`) rather than a general place-name list; see
+  `docs/phase-1.3-users-matching-notifications-plan.md`. Currently covers
+  Yerevan + Ararat only — expand the enum as more regions get address
+  support. Settlement/city and street names are explicitly *not*
+  canonicalized (free text, exact match) — deferred pending a real
+  gazetteer, with the schema designed so an admin-managed list can be
+  added later without a redesign.
 - **Marz names are stored in inflected/genitive Armenian form**
-  (e.g. `Սյունիքի`, not `Սյունիք`) — needs normalizing to canonical form
-  before matching against a canonical list.
+  (e.g. `Սյունիքի`, not `Սյունիք`) on `OutageAnnouncement.marz` — still
+  true, unchanged by the `Region` enum above (that model stays free
+  text on purpose). Turns out to need less normalization than expected:
+  both parsers already store Yerevan canonically, so only real marzes
+  need a genitive→canonical mapping — one entry (`Արարատի → Արարատ`) for
+  the matching layer to build once it lands.
 - **Sub-numbered range-endpoint matching rule** (e.g. `67-80/2`) — the
   "implicit `/1` floor" interpretation is a documented assumption, not
   provider-confirmed; parsing stores what's seen, matching-time
