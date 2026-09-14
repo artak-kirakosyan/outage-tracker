@@ -1,8 +1,9 @@
 import pytest
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 
 from accounts.models import Address, User
-from common.enums import Channel, Region
+from common.enums import Channel, Confidence, Region
 from ingestion.models import FetchStatus, Provider, RawContent, SourceType
 from notifications.models import NotificationLog, NotificationStatus
 from processing.models import OutageAnnouncement, OutageType, ParseStatus
@@ -44,3 +45,21 @@ def test_address_and_announcement_pair_must_be_unique():
     NotificationLog.objects.create(user=user, address=address, outage_announcement=announcement)
     with pytest.raises(IntegrityError):
         NotificationLog.objects.create(user=user, address=address, outage_announcement=announcement)
+
+
+def test_match_confidence_accepts_a_valid_enum_value():
+    user, address, announcement = _setup()
+    log = NotificationLog.objects.create(
+        user=user, address=address, outage_announcement=announcement, match_confidence=Confidence.FULL_ADDRESS,
+    )
+    log.full_clean()
+    assert log.match_confidence == Confidence.FULL_ADDRESS
+
+
+def test_match_confidence_rejects_a_value_outside_the_enum():
+    user, address, announcement = _setup()
+    log = NotificationLog(
+        user=user, address=address, outage_announcement=announcement, match_confidence="medium",
+    )
+    with pytest.raises(ValidationError):
+        log.full_clean()

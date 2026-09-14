@@ -1,7 +1,7 @@
 import pytest
 
 from accounts.models import Address, User
-from common.enums import Region
+from common.enums import Confidence, Region
 from ingestion.models import FetchStatus, Provider, RawContent, SourceType
 from notifications.compute import compute_pending_notifications
 from notifications.models import NotificationLog, NotificationStatus
@@ -43,7 +43,7 @@ def test_creates_a_pending_notification_for_a_real_match():
     assert log.user == user
     assert log.address == address
     assert log.outage_announcement == announcement
-    assert log.match_confidence == "high"
+    assert log.match_confidence == Confidence.FULL_ADDRESS
     assert log.status == NotificationStatus.PENDING
 
 

@@ -38,6 +38,17 @@ class Region(models.TextChoices):
     ARARAT = "ararat", "Ararat"
 
 
+class Confidence(models.TextChoices):
+    """
+    How a matching.matcher.Match was derived. Shared here, not defined
+    in matching/, since notifications.NotificationLog.match_confidence
+    stores the same value without importing matching's dataclass.
+    """
+
+    FULL_ADDRESS = "full_address", "Street and house number matched"
+    STREET_ONLY = "street_only", "Street name only, no house number check"
+
+
 class Channel(models.TextChoices):
     """
     A delivery/identity channel a User is reachable on. Only Telegram is

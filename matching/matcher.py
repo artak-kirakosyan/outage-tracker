@@ -13,6 +13,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from accounts.models import Address
+from common.enums import Confidence
 from matching.geography import marz_values_for_region
 from processing.address_grammar import LocationKind, Parity
 from processing.models import OutageAnnouncement, OutageLocation, ParseStatus
@@ -22,12 +23,7 @@ from processing.models import OutageAnnouncement, OutageLocation, ParseStatus
 class Match:
     address: Address
     announcement: OutageAnnouncement
-    # "high": a Veolia-style structured OutageLocation match (street +
-    # house-number range/parity). "low": an ENA-style substring match
-    # against raw_address_text -- street-name granularity only, no
-    # house-number check, so it over-matches by design (see the plan
-    # doc's note on ENA's precision gap).
-    confidence: str
+    confidence: Confidence
 
 
 def find_matches_for_address(address: Address) -> list[Match]:
@@ -40,9 +36,9 @@ def find_matches_for_address(address: Address) -> list[Match]:
         locations = list(announcement.locations.all())
         if locations:
             if any(_location_matches_address(loc, address) for loc in locations):
-                matches.append(Match(address=address, announcement=announcement, confidence="high"))
+                matches.append(Match(address=address, announcement=announcement, confidence=Confidence.FULL_ADDRESS))
         elif _raw_text_matches_address(announcement, address):
-            matches.append(Match(address=address, announcement=announcement, confidence="low"))
+            matches.append(Match(address=address, announcement=announcement, confidence=Confidence.STREET_ONLY))
     return matches
 
 

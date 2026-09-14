@@ -4,7 +4,7 @@ import pytest
 from django.utils import timezone
 
 from accounts.models import Address, User
-from common.enums import Region
+from common.enums import Confidence, Region
 from ingestion.models import FetchStatus, Provider, RawContent, SourceType
 from matching.matcher import find_matches_for_address
 from processing.address_grammar import LocationKind, Parity
@@ -57,7 +57,7 @@ def test_whole_street_location_matches_regardless_of_house_number():
     )
     matches = find_matches_for_address(address)
     assert len(matches) == 1
-    assert matches[0].confidence == "high"
+    assert matches[0].confidence == Confidence.FULL_ADDRESS
 
 
 def test_street_range_matches_number_inside_range():
@@ -177,7 +177,7 @@ def test_ena_style_raw_text_match_is_low_confidence():
     )
     matches = find_matches_for_address(address)
     assert len(matches) == 1
-    assert matches[0].confidence == "low"
+    assert matches[0].confidence == Confidence.STREET_ONLY
     assert matches[0].announcement == announcement
 
 
@@ -252,6 +252,19 @@ def test_missing_end_time_falls_back_to_recent_last_seen_at():
     # last_seen_at defaults to "now" at creation -- within the default
     # 3-day staleness window, so this is still a candidate.
     assert len(find_matches_for_address(address)) == 1
+
+
+def test_match_confidence_is_the_shared_enum_not_a_bare_string():
+    high_address = _address(street="Tumanyan", house_number=10, external_id="1")
+    high_announcement = _announcement(external_ref="ref-high")
+    OutageLocation.objects.create(
+        announcement=high_announcement, raw_fragment="Tumanyan", kind=LocationKind.WHOLE_STREET, street="Tumanyan",
+    )
+    low_address = _address(region=Region.ARARAT, street="Aygezard", external_id="2")
+    _announcement(marz="Արարատի", raw_address_text="Aygezard village", provider=Provider.ENA, external_ref="ref-low")
+
+    assert find_matches_for_address(high_address)[0].confidence is Confidence.FULL_ADDRESS
+    assert find_matches_for_address(low_address)[0].confidence is Confidence.STREET_ONLY
 
 
 def test_missing_end_time_and_stale_last_seen_at_is_excluded():

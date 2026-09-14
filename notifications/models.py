@@ -1,6 +1,6 @@
 from django.db import models
 
-from common.enums import Channel
+from common.enums import Channel, Confidence
 
 __all__ = ["NotificationStatus", "NotificationLog"]
 
@@ -36,11 +36,10 @@ class NotificationLog(models.Model):
 
     channel = models.CharField(max_length=32, choices=Channel.choices, default=Channel.TELEGRAM)
     # Copied from matching.matcher.Match.confidence at creation time --
-    # kept as plain text rather than importing matching's dataclass here,
-    # since this is what the eventual notification copy reads to decide
+    # this is what the eventual notification copy reads to decide
     # whether to show the "this covers part of your street" caveat (see
     # the plan doc's note on ENA's precision gap).
-    match_confidence = models.CharField(max_length=16, blank=True, default="")
+    match_confidence = models.CharField(max_length=16, choices=Confidence.choices, blank=True, default="")
 
     status = models.CharField(max_length=16, choices=NotificationStatus.choices, default=NotificationStatus.PENDING)
     created_at = models.DateTimeField(auto_now_add=True)
