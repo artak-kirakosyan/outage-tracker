@@ -34,7 +34,7 @@ We want a real system:
 | Phase | Goal | Status |
 |---|---|---|
 | **0.5** | Raw outage ingestion into storage. No parsing, no users, no notifications. | **Done** |
-| **1** | Raw → structured outage parsing (address-range logic); Users/Addresses CRUD via bot; matching + notifications + notification history. | **In progress** — raw→structured parsing and storage done; `Region`/`Channel` enums and `Address`/`User` models done; matching, notifications, and the bot not started |
+| **1** | Raw → structured outage parsing (address-range logic); Users/Addresses CRUD via bot; matching + notifications + notification history. | **In progress** — raw→structured parsing and storage done; `Region`/`Channel` enums, `Address`/`User` models, matching layer, and notification logging all done; only the Telegram bot (CRUD + delivery) remains |
 | **2** | Gazprom added as a third provider via the same abstraction. | Not started |
 | **3** | Paywall/entitlements activated on the reserved extension points. | Not started |
 
@@ -177,20 +177,24 @@ Split into three slices; only the first is done.
 ### 5.3 Users, matching, notifications — In progress
 
 See `docs/phase-1.3-users-matching-notifications-plan.md` for the full
-design and the decisions locked in during review.
+design, decisions locked in during review, and one thing that only
+became clear while implementing (excluding failed ENA parses from
+matching).
 
 - `common/enums.py` — `Region` (`YEREVAN`/`ARARAT` for now, expandable)
   and `Channel` (`TELEGRAM` for now) added alongside `Provider`. **Done.**
-- `accounts/` — `User` (channel-generic identity: `(channel,
-  external_id)`, not a dedicated Telegram field) and `Address` (no
-  provider field — matches every provider by default; `region` is the
-  one enum-backed field, `district_or_city`/`street` are free text) +
+- `accounts/` — `User` (channel-generic identity) and `Address` (no
+  provider field, `region` enum-backed, other place fields free text) +
   migration. **Done.**
-- Matching layer: address ↔ outage, using `Region` for the geography
-  filter now that it exists. Not started.
-- `NotificationLog` model + send logic. Not started.
+- `matching/` — pure `find_matches_for_address()`, Veolia structured
+  (street + house-number range/parity) and ENA raw-text (street-name
+  only, documented over-matching) paths, geography canonicalization.
+  **Done.**
+- `notifications/` — `NotificationLog` model +
+  `compute_pending_notifications()` (compute-and-log only, no delivery
+  yet) + `compute_notifications` management command. **Done.**
 - CRUD + delivery via a rewritten, async Telegram bot
-  (`python-telegram-bot` v20+). Not started.
+  (`python-telegram-bot` v20+). Not started — needs a live bot token.
 
 ## 6. Phases 2–3
 
@@ -214,14 +218,16 @@ design and the decisions locked in during review.
 - **Marz names are stored in inflected/genitive Armenian form**
   (e.g. `Սյունիքի`, not `Սյունիք`) on `OutageAnnouncement.marz` — still
   true, unchanged by the `Region` enum above (that model stays free
-  text on purpose). Turns out to need less normalization than expected:
-  both parsers already store Yerevan canonically, so only real marzes
-  need a genitive→canonical mapping — one entry (`Արարատի → Արարատ`) for
-  the matching layer to build once it lands.
-- **Sub-numbered range-endpoint matching rule** (e.g. `67-80/2`) — the
-  "implicit `/1` floor" interpretation is a documented assumption, not
-  provider-confirmed; parsing stores what's seen, matching-time
-  behavior still needs deciding/validating.
+  text on purpose). Needed less normalization than expected in
+  practice: both parsers already store Yerevan canonically, so
+  `matching/geography.py`'s inflection map only needed one entry
+  (`Արարատի → Արարատ`) to cover both regions the enum currently has.
+- **Sub-numbered range-endpoint matching rule** (e.g. `67-80/2`) —
+  implemented in `matching/matcher.py` per the documented "implicit `/1`
+  floor" assumption: a bound's own sub-number only restricts an address
+  landing exactly on that bound, interior numbers always match. Still
+  not provider-confirmed — flagged in the matcher's own comments, not
+  just here.
 - **Parity scope simplification** — a parity word trailing a whole
   comma-list (no number of its own) isn't retroactively applied to
   earlier items in the list; flagged for revisit if it turns out to

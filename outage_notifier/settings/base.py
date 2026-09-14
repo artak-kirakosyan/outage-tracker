@@ -31,6 +31,7 @@ INSTALLED_APPS = [
     "ingestion",
     "processing",
     "accounts",
+    "notifications",
 ]
 
 MIDDLEWARE = [
@@ -115,6 +116,20 @@ VEOLIA_TELEGRAM_FETCH_INTERVAL_MINUTES = int(
 # polite to), so it defaults to a much shorter interval than the
 # fetchers above.
 PROCESS_RAW_CONTENT_INTERVAL_MINUTES = int(os.environ.get("PROCESS_RAW_CONTENT_INTERVAL_MINUTES", "5"))
+
+# matching.matcher bounds its OutageAnnouncement query by time rather
+# than scanning the whole (ever-growing, never-pruned) table on every
+# run -- see docs/phase-1.3-users-matching-notifications-plan.md.
+# MATCH_END_GRACE_HOURS: an announcement with a real ends_at stays a
+# match candidate until that long after it ends, so an address
+# registered right as an outage wraps up still sees it.
+# MATCH_STALE_WITHOUT_END_DAYS: fallback for announcements that never
+# got a structured ends_at (some "partial" parses -- see
+# processing/parsers/ena_planned.py's no-time-match branch). Recency of
+# last_seen_at stands in for "is this still live" when there's no real
+# end time to check.
+MATCH_END_GRACE_HOURS = int(os.environ.get("MATCH_END_GRACE_HOURS", "6"))
+MATCH_STALE_WITHOUT_END_DAYS = int(os.environ.get("MATCH_STALE_WITHOUT_END_DAYS", "3"))
 
 def _env_bool(name: str, default: bool) -> bool:
     return os.environ.get(name, str(default)).strip().lower() in ("1", "true", "yes", "on")

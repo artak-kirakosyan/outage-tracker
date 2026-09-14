@@ -14,11 +14,13 @@ Nationwide utility outage tracking & notification system for Armenia
   the parsers to `RawContent` (including an HTML-extraction step the
   parsers need but didn't have — see the plan doc §9), and the
   scheduler job that runs it.
-- **Phase 1.3, users & addresses (in progress):** `Region`/`Channel`
-  enums and the `accounts.User`/`accounts.Address` models are in place.
-  See `docs/phase-1.3-users-matching-notifications-plan.md`.
-- **Not yet built:** matching, notifications, and the Telegram CRUD bot
-  — see `docs/project-plan.md` §5.3.
+- **Phase 1.3, users, matching & notifications (in progress):**
+  `Region`/`Channel` enums, `accounts.User`/`accounts.Address` models,
+  the `matching` layer, and `notifications.NotificationLog` are all in
+  place. See `docs/phase-1.3-users-matching-notifications-plan.md`.
+- **Not yet built:** the Telegram CRUD bot (registration, address
+  management, and actual delivery of computed notifications) — see
+  `docs/project-plan.md` §5.3.
 
 ## Stack
 
@@ -72,6 +74,20 @@ Nationwide utility outage tracking & notification system for Armenia
   `common.enums.Region`, other place fields are free text) — see
   `docs/phase-1.3-users-matching-notifications-plan.md`. No CRUD yet;
   models only.
+- `matching` — pure functions, no models: `find_matches_for_address()`
+  matches an `Address` against `OutageAnnouncement`s two ways —
+  structured (Veolia's `OutageLocation` rows: street + house-number
+  range/parity, `confidence="high"`) and raw-text substring (ENA's
+  planned block: street-name only, no house-number check,
+  `confidence="low"` — an intentional, documented over-match). Failed
+  ENA parses are excluded (their `raw_address_text` is an unparsed
+  block, not a real address list).
+- `notifications` — `NotificationLog` model +
+  `compute_pending_notifications()`, which logs every new match with
+  `status="pending"` and is idempotent (`get_or_create` on
+  `(address, outage_announcement)`). Run manually via
+  `compute_notifications`; not yet wired into `run_scheduler`. Actually
+  *sending* anything is the bot's job — not built yet.
 
 ## ⚠️ Known limitation of this build environment
 
@@ -189,6 +205,18 @@ accounts/                # Address/User models (Phase 1.3)
   admin.py
   migrations/
   tests/
+matching/                # Address <-> OutageAnnouncement matching (Phase 1.3)
+  geography.py             # OutageAnnouncement.marz -> Region canonicalization
+  matcher.py                # find_matches_for_address() -- pure, not persisted
+  tests/
+notifications/            # Match -> logged NotificationLog (Phase 1.3)
+  models.py                 # NotificationLog (pending/sent/failed)
+  compute.py                  # compute_pending_notifications() -- log only, no send
+  admin.py
+  migrations/
+  management/commands/
+    compute_notifications.py
+  tests/
 docs/
   phase-0.5-plan.md      # detailed plan + Phase 1 prep notes
   phase-1-processing-plan.md  # scope, schema design, decisions, test results
@@ -198,6 +226,6 @@ scripts/
 ```
 
 Deliberately **not** built yet, but anticipated in this layout so later
-phases don't require reshuffling: `bot/` (Telegram CRUD bot),
-`matching/` (address ↔ outage), `notifications/` (send + log). See
-`docs/project-plan.md` §5.3.
+phases don't require reshuffling: `bot/` (Telegram CRUD — registration,
+address management, and actual delivery of what `notifications` already
+computes). See `docs/project-plan.md` §5.3.
