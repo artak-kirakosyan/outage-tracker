@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "processing",
     "accounts",
     "notifications",
+    "matching",
     "bot",
 ]
 

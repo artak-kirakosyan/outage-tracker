@@ -34,7 +34,7 @@ We want a real system:
 | Phase | Goal | Status |
 |---|---|---|
 | **0.5** | Raw outage ingestion into storage. No parsing, no users, no notifications. | **Done** |
-| **1** | Raw → structured outage parsing (address-range logic); Users/Addresses CRUD via bot; matching + notifications + notification history. | **In progress** — raw→structured parsing and storage done; `Region`/`Channel` enums, `Address`/`User` models, matching layer, and notification logging all done; only the Telegram bot (CRUD + delivery) remains |
+| **1** | Raw → structured outage parsing (address-range logic); Users/Addresses CRUD via bot; matching + notifications + notification history. | **Done** |
 | **2** | Gazprom added as a third provider via the same abstraction. | Not started |
 | **3** | Paywall/entitlements activated on the reserved extension points. | Not started |
 
@@ -193,8 +193,17 @@ matching).
 - `notifications/` — `NotificationLog` model +
   `compute_pending_notifications()` (compute-and-log only, no delivery
   yet) + `compute_notifications` management command. **Done.**
-- CRUD + delivery via a rewritten, async Telegram bot
-  (`python-telegram-bot` v20+). Not started — needs a live bot token.
+- CRUD + delivery via an async Telegram bot (`python-telegram-bot`
+  v20+, polling). **Done.** `bot/` — menu-driven address CRUD (inline
+  keyboards, no address IDs typed by the user), `/notifications` for
+  recent history. Delivery is a separate module,
+  `notifications/send.py`, run back-to-back with
+  `compute_notifications` as one `run_scheduler` job
+  (`NOTIFICATION_INTERVAL_MINUTES`). A `matching.check_match`
+  management command exists for manually testing one address against
+  one announcement (bypassing the production time-window filter) and
+  previewing or actually sending the resulting notification — see
+  `README.md`.
 
 ## 6. Phases 2–3
 

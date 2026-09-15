@@ -32,7 +32,7 @@ _STREET_ONLY_CAVEAT = (
 )
 
 
-def _format_message(log: NotificationLog) -> str:
+def format_message(log: NotificationLog) -> str:
     """
     Our own match details (source, confidence, area, caveat) come
     first and are kept short; the source's own announcement text --
@@ -60,7 +60,7 @@ def _format_message(log: NotificationLog) -> str:
 
 async def _send_one(bot: Bot, log: NotificationLog) -> tuple[NotificationLog, bool]:
     try:
-        await bot.send_message(chat_id=int(log.user.external_id), text=_format_message(log))
+        await bot.send_message(chat_id=int(log.user.external_id), text=format_message(log))
         return log, True
     except TelegramError:
         logger.exception("Failed to send NotificationLog id=%s", log.id)
@@ -71,6 +71,29 @@ async def _send_all(logs: list[NotificationLog]) -> list[tuple[NotificationLog, 
     bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
     async with bot:
         return [await _send_one(bot, log) for log in logs]
+
+
+def send_notification(log: NotificationLog) -> bool:
+    """
+    Send exactly one NotificationLog and update its status. Separate
+    from send_pending_notifications() (which sends every PENDING row in
+    one batch) for manual/test delivery -- e.g. matching's check_match
+    command -- where sweeping up unrelated PENDING rows would be a
+    surprising side effect.
+    """
+    async def _send() -> tuple[NotificationLog, bool]:
+        bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+        async with bot:
+            return await _send_one(bot, log)
+
+    _, success = asyncio.run(_send())
+    log.status = NotificationStatus.SENT if success else NotificationStatus.FAILED
+    update_fields = ["status"]
+    if success:
+        log.sent_at = timezone.now()
+        update_fields.append("sent_at")
+    log.save(update_fields=update_fields)
+    return success
 
 
 def send_pending_notifications() -> dict:

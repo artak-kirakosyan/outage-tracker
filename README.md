@@ -14,13 +14,15 @@ Nationwide utility outage tracking & notification system for Armenia
   the parsers to `RawContent` (including an HTML-extraction step the
   parsers need but didn't have — see the plan doc §9), and the
   scheduler job that runs it.
-- **Phase 1.3, users, matching & notifications (in progress):**
+- **Phase 1.3, users, matching & notifications (done):**
   `Region`/`Channel` enums, `accounts.User`/`accounts.Address` models,
-  the `matching` layer, and `notifications.NotificationLog` are all in
-  place. See `docs/phase-1.3-users-matching-notifications-plan.md`.
-- **Not yet built:** the Telegram CRUD bot (registration, address
-  management, and actual delivery of computed notifications) — see
-  `docs/project-plan.md` §5.3.
+  the `matching` layer, `notifications.NotificationLog` + delivery, and
+  the Telegram bot (registration, address CRUD, notification history)
+  are all in place. See
+  `docs/phase-1.3-users-matching-notifications-plan.md`.
+
+Phase 1 is complete. Not yet started: Phase 2 (Gazprom) and Phase 3
+(paywall/entitlements) — see `docs/project-plan.md` §6.
 
 ## Stack
 
@@ -72,8 +74,8 @@ Nationwide utility outage tracking & notification system for Armenia
 - `accounts` — `User` (channel-generic identity, not Telegram-specific)
   and `Address` (no provider field; `region` is enum-backed via
   `common.enums.Region`, other place fields are free text) — see
-  `docs/phase-1.3-users-matching-notifications-plan.md`. No CRUD yet;
-  models only.
+  `docs/phase-1.3-users-matching-notifications-plan.md`. CRUD via the
+  Telegram bot (`bot/`, below); no CRUD in Django admin beyond viewing.
 - `matching` — pure functions, no models: `find_matches_for_address()`
   matches an `Address` against `OutageAnnouncement`s two ways —
   structured (Veolia's `OutageLocation` rows: street + house-number
@@ -81,13 +83,23 @@ Nationwide utility outage tracking & notification system for Armenia
   planned block: street-name only, no house-number check,
   `confidence="low"` — an intentional, documented over-match). Failed
   ENA parses are excluded (their `raw_address_text` is an unparsed
-  block, not a real address list).
+  block, not a real address list). `check_match` management command —
+  manually test one address against one announcement (see "Testing a
+  specific match" below).
 - `notifications` — `NotificationLog` model +
   `compute_pending_notifications()`, which logs every new match with
   `status="pending"` and is idempotent (`get_or_create` on
-  `(address, outage_announcement)`). Run manually via
-  `compute_notifications`; not yet wired into `run_scheduler`. Actually
-  *sending* anything is the bot's job — not built yet.
+  `(address, outage_announcement)`); run by `run_scheduler` and
+  manually via `compute_notifications`. `notifications/send.py`
+  delivers `PENDING` rows via the Telegram Bot API
+  (`send_pending_notifications()`, batch; also run by
+  `run_scheduler` and manually via `send_notifications`) and marks
+  each `sent`/`failed`. A `failed` row isn't retried automatically.
+- `bot` — the Telegram bot (`python-telegram-bot` v20+, polling):
+  `/start` registers a `User`; menu-driven, inline-keyboard address
+  CRUD (add/edit/delete — no address id ever typed by the user);
+  `/notifications` for recent history. `run_bot` management command;
+  runs as its own `docker-compose` service, separate from `scheduler`.
 
 ## ⚠️ Known limitation of this build environment
 
@@ -124,6 +136,25 @@ uv run manage.py fetch_veolia_web
 uv run manage.py fetch_veolia_telegram
 uv run manage.py createsuperuser        # optional, for /admin/
 uv run manage.py runserver              # optional, for /admin/
+uv run manage.py run_bot                # starts the Telegram bot (needs TELEGRAM_BOT_TOKEN in .env)
+```
+
+## Testing a specific match
+
+To confirm an address actually catches a specific outage (and see the
+exact notification text) without waiting for real data or the
+scheduler's time-bounded scan:
+
+```bash
+uv run manage.py check_match --address <address_id> --announcement <announcement_id>
+```
+
+Reports the geography check, the text/location match result, and — if
+matched — previews the notification. Add `--send` to also log and
+actually deliver it via Telegram:
+
+```bash
+uv run manage.py check_match --address <address_id> --announcement <announcement_id> --send
 ```
 
 ## Docker Compose
@@ -135,12 +166,15 @@ docker compose up --build
 
 This starts:
 - `scheduler` — the long-running process, fetching all three sources on
-  their configured intervals (see `.env.example`)
+  their configured intervals, plus `process_raw_content` and the
+  compute+send notifications job (see `.env.example`)
+- `bot` — the Telegram bot (polling), separate from `scheduler` so a
+  bot restart doesn't interrupt fetching. Needs `TELEGRAM_BOT_TOKEN` set.
 - `admin` — optional Django admin at `http://localhost:8000/admin/`
   (run `docker compose run admin manage.py createsuperuser` once first)
 
-Both share a named volume (`db-data`) so the SQLite file and dumped
-files persist across restarts and are visible to both containers.
+All three share a named volume (`db-data`) so the SQLite file and
+dumped files persist across restarts and are visible to every container.
 
 ## Running tests
 
@@ -207,15 +241,26 @@ accounts/                # Address/User models (Phase 1.3)
   tests/
 matching/                # Address <-> OutageAnnouncement matching (Phase 1.3)
   geography.py             # OutageAnnouncement.marz -> Region canonicalization
-  matcher.py                # find_matches_for_address() -- pure, not persisted
+  matcher.py                # find_matches_for_address(); match_confidence_for_announcement()
+                              # is the pure per-pair check it's built on, also used by check_match
+  management/commands/
+    check_match.py             # manually test one address against one announcement
   tests/
-notifications/            # Match -> logged NotificationLog (Phase 1.3)
+notifications/            # Match -> logged NotificationLog -> delivered (Phase 1.3)
   models.py                 # NotificationLog (pending/sent/failed)
-  compute.py                  # compute_pending_notifications() -- log only, no send
+  compute.py                  # compute_pending_notifications() -- match + log
+  send.py                      # send_pending_notifications() / send_notification() -- deliver via Telegram
   admin.py
   migrations/
   management/commands/
     compute_notifications.py
+    send_notifications.py
+  tests/
+bot/                      # Telegram bot: registration, address CRUD, notification history (Phase 1.3)
+  handlers.py               # PTB conversation handlers (inline-keyboard menus, no typed address ids)
+  services.py                 # sync DB operations behind the handlers (Django ORM is sync-only)
+  management/commands/
+    run_bot.py                  # starts the bot (polling)
   tests/
 docs/
   phase-0.5-plan.md      # detailed plan + Phase 1 prep notes
@@ -224,8 +269,3 @@ docs/
 scripts/
   docker-entrypoint.sh
 ```
-
-Deliberately **not** built yet, but anticipated in this layout so later
-phases don't require reshuffling: `bot/` (Telegram CRUD — registration,
-address management, and actual delivery of what `notifications` already
-computes). See `docs/project-plan.md` §5.3.

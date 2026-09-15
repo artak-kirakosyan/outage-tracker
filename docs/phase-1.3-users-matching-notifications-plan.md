@@ -12,7 +12,7 @@ and the Telegram bot CRUD flow. Branch: `phase-1.3/users-addresses`.
 | `Address`/`User` models (`accounts/`) | **Done** |
 | Matching layer (`matching/`) | **Done** |
 | `NotificationLog` model + compute-and-log step (`notifications/`) | **Done** |
-| Telegram bot (CRUD + delivery) | Not started |
+| Telegram bot (CRUD + delivery) | **Done** |
 
 ## Decisions locked in during review
 
@@ -81,6 +81,15 @@ while writing it:
   shaped than a real match.
 - `Match(address, announcement, confidence)` is returned, not persisted
   — see `notifications/compute.py` for what turns it into a logged row.
+- **Added while building the bot's `check_match` testing command:**
+  the per-announcement text/location matching logic (the two bullets
+  above) was pulled out into its own
+  `matching.matcher.match_confidence_for_announcement(address,
+  announcement)`, independent of `_relevant_announcements()`'s
+  time-window bound. `find_matches_for_address()`'s behavior is
+  unchanged; this only made the pure "does the text match" check
+  reusable for testing one hand-picked pair without it being excluded
+  for being outside the production time window.
 
 ### Follow-up: bounding the query by time (performance)
 
@@ -126,26 +135,60 @@ dominant cost anymore, but it's still worth doing — separate follow-up.
   from "actually call the Telegram API" as designed, so it's fully
   testable without a live bot token. Idempotent via `get_or_create` on
   `(address, outage_announcement)`.
-- `compute_notifications` management command runs it manually for now;
-  wiring it into `run_scheduler` (or a bot-triggered flow) is part of
-  the bot task below, not done yet.
-- Delivery (`status` transitioning to `sent`/`failed`, actually calling
-  Telegram) is intentionally not built — that's the bot's job.
+- `compute_notifications` management command runs it manually; also run
+  by `run_scheduler` (see the Bot section below for the delivery half).
+- Delivery: `notifications/send.py`.
+  `send_pending_notifications()` sends every `PENDING` row in one
+  batch (used by the scheduler job and the `send_notifications`
+  command) via the Telegram Bot API, setting `sent`/`failed` per row.
+  A `FAILED` row is not retried automatically on the next run — left
+  for manual investigation rather than retried forever against a
+  possibly-permanently-bad chat id. `send_notification(log)` sends a
+  single row instead, used by `matching.check_match` (see the Bot
+  section) so a manual test doesn't sweep up unrelated `PENDING` rows.
 
-## Bot — design notes for the next slice
+## Bot — implemented as designed, with one addition
 
-- New `bot/` app, `python-telegram-bot` v20+ (async), replacing the old
-  v12 single-script bot.
-- Scope: register, add/edit/delete address (guided multi-step form: region
-  → city → street → number), list my addresses, list recent
-  notifications. Delivery of new-match notifications reuses this same
-  bot instance.
-- Polling, not webhook, for v1 — consistent with the project's existing
-  "simple over clever" calls (in-process scheduler threads, no Celery).
-  Runs as its own `docker-compose` service (`bot`), separate from
-  `scheduler`, so a bot restart doesn't interrupt fetching.
-- **Open, not urgent:** what a user outside Yerevan/Ararat sees when
-  trying to register an address — reject, "coming soon," or
-  register-with-no-matching-yet. Doesn't affect schema work; fine to
-  decide once this task is actually in front of us.
-- Needs a `TELEGRAM_BOT_TOKEN` env var + `.env.example` entry.
+- `bot/` app, `python-telegram-bot` v20+ (async), polling (not
+  webhook) — consistent with the project's existing "simple over
+  clever" calls (in-process scheduler threads, no Celery).
+  `run_bot` management command starts it; runs as its own
+  `docker-compose` service (`bot`), separate from `scheduler`, so a
+  bot restart doesn't interrupt fetching.
+- Scope: `/start` registers a `User`; add/edit/delete address via a
+  guided, inline-keyboard conversation (region → city → street →
+  number → optional sub-number → optional label → confirm); `/myaddresses`
+  lists addresses as buttons, tapping one shows its details plus
+  Edit/Delete/back buttons — **the user never types or needs to know an
+  address id**, unlike an earlier draft of this design. `/notifications`
+  lists recent `NotificationLog` rows. Editing overwrites the whole
+  record rather than patching individual fields, kept simple for v1.
+  Deleting asks for confirmation first.
+- `bot/services.py` holds the sync DB operations backing the handlers
+  (Django's ORM is sync-only; handlers wrap each call with
+  `sync_to_async`), kept separate so it's unit-testable without any
+  Telegram/PTB mocking.
+- Delivery of computed notifications reuses `notifications/send.py`
+  (see the Notifications section above), not bot-instance-specific
+  code — the bot process only handles the conversation.
+- **New: `matching.check_match` management command**, added after
+  real-address testing surfaced a gap — there was no way to construct
+  a specific test address and a specific test announcement and confirm
+  the match/notification actually fires without waiting on the
+  scheduler's time-bounded scan (`matching/matcher.py`'s
+  `_relevant_announcements()`) or a live outage. `check_match --address
+  <id> --announcement <id>` reports the geography check, the
+  text/location match result, and (if matched) previews the exact
+  notification text; `--send` additionally logs and delivers it via
+  Telegram for a real end-to-end check.
+- **Resolved during review, not left open:** users outside
+  Yerevan/Ararat are allowed to register an address freely, same as
+  any other region — no reject / "coming soon" gate. `Region` currently
+  only covers two marzes, so an address elsewhere simply won't match
+  anything yet; the rest of `Region` is expected to be filled in later
+  (see `docs/project-plan.md` §7).
+- `TELEGRAM_BOT_TOKEN` and `NOTIFICATION_INTERVAL_MINUTES` env vars
+  added to `.env.example`.
+- **Known simplification, not a bug:** `Address` has no `active`/
+  paused flag — a user who wants to stop matching on one address has
+  to delete it. Noted as a future enhancement, not built now.
