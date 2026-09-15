@@ -65,6 +65,14 @@ class Command(BaseCommand):
         jobs.append(process_job)
         self.stdout.write(f"Scheduling {process_job.name} every {process_job.interval_seconds // 60} min")
 
+        def _run_notifications() -> None:
+            call_command("compute_notifications")
+            call_command("send_notifications")
+
+        notification_job = Job("notifications", _run_notifications, settings.NOTIFICATION_INTERVAL_MINUTES * 60)
+        jobs.append(notification_job)
+        self.stdout.write(f"Scheduling {notification_job.name} every {notification_job.interval_seconds // 60} min")
+
         stop_event = threading.Event()
         threads = start_scheduler(jobs, stop_event)
 

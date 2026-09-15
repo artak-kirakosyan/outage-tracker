@@ -1,7 +1,7 @@
 import pytest
 from django.db import IntegrityError
 
-from accounts.models import Address, User
+from accounts.models import Address, User, format_house_number
 from common.enums import Channel, Region
 
 pytestmark = pytest.mark.django_db
@@ -72,6 +72,30 @@ def test_address_str_includes_house_number_sub():
         street="Gyulbenkyan", house_number=4, house_number_sub="A",
     )
     assert str(address) == "Gyulbenkyan 4A"
+
+
+def test_address_str_uses_slash_for_numeric_sub():
+    # Regression: house_number=21, house_number_sub="12" previously
+    # rendered as the unreadable "2112" (plain concatenation) instead
+    # of "21/12".
+    user = User.objects.create(external_id="5")
+    address = Address.objects.create(
+        user=user, region=Region.YEREVAN, district_or_city="Arabkir",
+        street="Griboyedov", house_number=21, house_number_sub="12",
+    )
+    assert str(address) == "Griboyedov 21/12"
+
+
+def test_format_house_number_without_sub():
+    assert format_house_number(10, "") == "10"
+
+
+def test_format_house_number_with_letter_suffix():
+    assert format_house_number(4, "A") == "4A"
+
+
+def test_format_house_number_with_numeric_sub():
+    assert format_house_number(21, "12") == "21/12"
 
 
 def test_deleting_user_cascades_to_their_addresses():

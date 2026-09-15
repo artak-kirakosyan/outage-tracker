@@ -6,7 +6,7 @@ from django.utils import timezone
 from accounts.models import Address, User
 from common.enums import Confidence, Region
 from ingestion.models import FetchStatus, Provider, RawContent, SourceType
-from matching.matcher import find_matches_for_address
+from matching.matcher import find_matches_for_address, match_confidence_for_announcement
 from processing.address_grammar import LocationKind, Parity
 from processing.models import OutageAnnouncement, OutageLocation, OutageType, ParseStatus
 
@@ -274,5 +274,34 @@ def test_missing_end_time_and_stale_last_seen_at_is_excluded():
         announcement=announcement, raw_fragment="Tumanyan", kind=LocationKind.WHOLE_STREET, street="Tumanyan",
     )
     _backdate_last_seen(announcement, timezone.now() - datetime.timedelta(days=30))
+    assert find_matches_for_address(address) == []
+
+
+def test_match_confidence_for_announcement_full_address():
+    address = _address(street="Tumanyan", house_number=1)
+    announcement = _announcement()
+    OutageLocation.objects.create(
+        announcement=announcement, raw_fragment="Tumanyan", kind=LocationKind.WHOLE_STREET, street="Tumanyan",
+    )
+    assert match_confidence_for_announcement(address, announcement) is Confidence.FULL_ADDRESS
+
+
+def test_match_confidence_for_announcement_no_match_returns_none():
+    address = _address(street="Nonexistent")
+    announcement = _announcement(raw_address_text="Tumanyan street")
+    assert match_confidence_for_announcement(address, announcement) is None
+
+
+def test_match_confidence_for_announcement_ignores_the_time_window_bound():
+    # Unlike find_matches_for_address(), this is a pure text check --
+    # a long-expired announcement still reports a confidence here, since
+    # the time bound exists to limit the production scan, not to define
+    # what "is a match" means.
+    address = _address(street="Tumanyan", house_number=1)
+    announcement = _announcement(ends_at=timezone.now() - datetime.timedelta(days=365))
+    OutageLocation.objects.create(
+        announcement=announcement, raw_fragment="Tumanyan", kind=LocationKind.WHOLE_STREET, street="Tumanyan",
+    )
+    assert match_confidence_for_announcement(address, announcement) is Confidence.FULL_ADDRESS
     assert find_matches_for_address(address) == []
 

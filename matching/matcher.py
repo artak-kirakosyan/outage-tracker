@@ -26,6 +26,26 @@ class Match:
     confidence: Confidence
 
 
+def match_confidence_for_announcement(address: Address, announcement: OutageAnnouncement) -> Confidence | None:
+    """
+    Whether/how `address`'s street/house-number text matches a single
+    `announcement`'s location(s) or raw address text -- geography
+    canonicalization and the time-window bound in
+    _relevant_announcements() are applied separately, not here, so this
+    stays a pure text-matching check. Used both by
+    find_matches_for_address()'s scan and by the check_match management
+    command for testing one hand-picked (address, announcement) pair.
+    """
+    locations = list(announcement.locations.all())
+    if locations:
+        if any(_location_matches_address(loc, address) for loc in locations):
+            return Confidence.FULL_ADDRESS
+        return None
+    if _raw_text_matches_address(announcement, address):
+        return Confidence.STREET_ONLY
+    return None
+
+
 def find_matches_for_address(address: Address) -> list[Match]:
     marz_values = marz_values_for_region(address.region)
     if not marz_values:
@@ -33,12 +53,9 @@ def find_matches_for_address(address: Address) -> list[Match]:
 
     matches = []
     for announcement in _relevant_announcements(marz_values):
-        locations = list(announcement.locations.all())
-        if locations:
-            if any(_location_matches_address(loc, address) for loc in locations):
-                matches.append(Match(address=address, announcement=announcement, confidence=Confidence.FULL_ADDRESS))
-        elif _raw_text_matches_address(announcement, address):
-            matches.append(Match(address=address, announcement=announcement, confidence=Confidence.STREET_ONLY))
+        confidence = match_confidence_for_announcement(address, announcement)
+        if confidence is not None:
+            matches.append(Match(address=address, announcement=announcement, confidence=confidence))
     return matches
 
 
