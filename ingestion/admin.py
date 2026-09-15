@@ -1,6 +1,20 @@
 from django.contrib import admin
 
 from ingestion.models import RawContent
+from processing.dashboard import EXTRACTION_FAILED_PREFIX
+
+
+class ExtractionFailedFilter(admin.SimpleListFilter):
+    title = "extraction"
+    parameter_name = "extraction"
+
+    def lookups(self, request, model_admin):
+        return (("failed", "Extraction failed"),)
+
+    def queryset(self, request, queryset):
+        if self.value() == "failed":
+            return queryset.filter(error_message__startswith=EXTRACTION_FAILED_PREFIX)
+        return queryset
 
 
 @admin.register(RawContent)
@@ -14,7 +28,7 @@ class RawContentAdmin(admin.ModelAdmin):
         "processed",
         "content_preview",
     )
-    list_filter = ("provider", "source_type", "fetch_status", "processed")
+    list_filter = ("provider", "source_type", "fetch_status", "processed", ExtractionFailedFilter)
     search_fields = ("reference", "content", "error_message")
     readonly_fields = (
         "provider",
@@ -27,6 +41,12 @@ class RawContentAdmin(admin.ModelAdmin):
         "dump_file_path",
     )
     date_hierarchy = "fetched_at"
+    actions = ["mark_unprocessed"]
+
+    @admin.action(description="Mark unprocessed selected raw contents")
+    def mark_unprocessed(self, request, queryset):
+        updated = queryset.update(processed=False)
+        self.message_user(request, f"Successfully marked {updated} entities as unprocessed.")
 
     @admin.display(description="Content preview")
     def content_preview(self, obj: RawContent) -> str:

@@ -51,7 +51,7 @@ ROOT_URLCONF = "outage_notifier.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
+        "DIRS": [BASE_DIR / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -138,6 +138,11 @@ NOTIFICATION_INTERVAL_MINUTES = int(os.environ.get("NOTIFICATION_INTERVAL_MINUTE
 # end time to check.
 MATCH_END_GRACE_HOURS = int(os.environ.get("MATCH_END_GRACE_HOURS", "6"))
 MATCH_STALE_WITHOUT_END_DAYS = int(os.environ.get("MATCH_STALE_WITHOUT_END_DAYS", "3"))
+
+# Admin pipeline-health dashboard: users with addresses who have had no
+# NotificationLog (match/notify) within this many months are flagged as
+# quiet / possibly dead subscriptions.
+DEAD_SUBSCRIPTION_MONTHS = int(os.environ.get("DEAD_SUBSCRIPTION_MONTHS", "3"))
 
 def _env_bool(name: str, default: bool) -> bool:
     return os.environ.get(name, str(default)).strip().lower() in ("1", "true", "yes", "on")

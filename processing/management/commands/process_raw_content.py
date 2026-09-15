@@ -5,9 +5,11 @@ from django.db import transaction
 from django.utils import timezone as dj_timezone
 
 from ingestion.models import FetchStatus, Provider, RawContent
+from processing.dashboard import extraction_failed_message
 from processing.html_extract import extract_ena_planned_section, extract_veolia_telegram_posts
 from processing.idempotency import ena_external_ref
 from processing.models import OutageAnnouncement, OutageLocation, OutageType
+from processing.normalize import normalize_multiline
 from processing.parsers.ena_planned import parse_planned_section
 from processing.parsers.veolia_telegram import parse_post
 
@@ -38,11 +40,11 @@ class Command(BaseCommand):
             try:
                 with transaction.atomic():
                     if raw.provider == Provider.ENA:
-                        self._process_ena(raw, summary)
+                        extra_fields = self._process_ena(raw, summary)
                     else:
-                        self._process_veolia(raw, summary)
+                        extra_fields = self._process_veolia(raw, summary)
                     raw.processed = True
-                    raw.save(update_fields=["processed"])
+                    raw.save(update_fields=["processed", *extra_fields])
             except Exception:
                 # The queryset is oldest-first and re-run every tick, so
                 # leaving a row that raises as processed=False would
@@ -66,14 +68,20 @@ class Command(BaseCommand):
         self.stdout.write(f"process_raw_content summary: {summary}")
         logger.info("process_raw_content summary: %s", summary)
 
-    def _process_ena(self, raw: RawContent, summary: dict) -> None:
+    def _process_ena(self, raw: RawContent, summary: dict) -> list[str]:
         section = extract_ena_planned_section(raw.content)
         if section is None:
             # An OK-status fetch that yields nothing usable is a real
             # signal (markup change, wrong id guess), not a quiet no-op.
-            logger.error("ENA planned section ('attenbody') not found in RawContent id=%s.", raw.id)
+            # Persist on the row so the admin dashboard can surface it
+            # (fetch_status stays OK — the HTTP fetch itself succeeded).
+            reason = "ENA planned section ('attenbody') not found"
+            logger.error("%s in RawContent id=%s.", reason, raw.id)
+            raw.error_message = extraction_failed_message(reason)
             summary["extraction_failed"] += 1
-            return
+            return ["error_message"]
+
+        section = normalize_multiline(section)
 
         year = dj_timezone.localtime(raw.fetched_at).year
         for item in parse_planned_section(section, year=year):
@@ -109,13 +117,16 @@ class Command(BaseCommand):
                     obj.is_preliminary = False
                     update_fields.append("is_preliminary")
                 obj.save(update_fields=update_fields)
+        return []
 
-    def _process_veolia(self, raw: RawContent, summary: dict) -> None:
+    def _process_veolia(self, raw: RawContent, summary: dict) -> list[str]:
         posts = extract_veolia_telegram_posts(raw.content)
         if not posts:
-            logger.error("No Telegram posts extracted from RawContent id=%s.", raw.id)
+            reason = "No Telegram posts extracted"
+            logger.error("%s from RawContent id=%s.", reason, raw.id)
+            raw.error_message = extraction_failed_message(reason)
             summary["extraction_failed"] += 1
-            return
+            return ["error_message"]
 
         year = dj_timezone.localtime(raw.fetched_at).year
         for external_ref, text in posts:
@@ -162,6 +173,7 @@ class Command(BaseCommand):
             else:
                 summary["announcements_touched"] += 1
                 obj.save(update_fields=["last_seen_at"])
+        return []
 
 
 def _make_aware(naive_datetime):
