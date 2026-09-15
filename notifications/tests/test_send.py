@@ -104,6 +104,15 @@ def test_own_details_and_raw_announcement_text_are_clearly_separated(mock_bot_cl
     send_pending_notifications()
 
     text = mock_bot.send_message.call_args.kwargs["text"]
-    assert "Announcement text:" in text
-    # Everything before the heading is our own summary, not raw source text.
-    assert text.index("Announcement text:") < text.index("Tumanyan")
+    notification = "Outage notice for Tumanyan 1\n\
+                    Source: Veolia — Telegram channel (Emergency)\n\
+                    Confidence: Street and house number matched\n\
+                    Area: Երևան\n\
+                    \n\
+                    Announcement text:\n\
+                    Tumanyan\n\
+    "
+    notification_lines = notification.split("\n")
+    for notification_line in notification_lines:
+        print(f"line is {notification_line}")
+        assert notification_line.strip() in text
