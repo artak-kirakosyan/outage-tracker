@@ -75,6 +75,7 @@ class LocationKind(str, Enum):
     WHOLE_STREET = "whole_street"  # a named street with no number given
     STREET_RANGE = "street_range"  # a street + a house number or house-number range
     STREET_NUMBER_RANGE = "street_number_range"  # a numbered-street area + a street-number or range (not house numbers)
+    NON_ADDRESS = "non_address"    # business / institution / owner — never matchable
     UNPARSED = "unparsed"          # raw fragment kept, nothing structured
 
 
@@ -82,6 +83,14 @@ class Parity(str, Enum):
     ANY = "any"
     ODD = "odd"
     EVEN = "even"
+
+
+class Qualifier(str, Enum):
+    """ENA մասնակի / ամբողջությամբ — stored for copy, not used to downgrade match confidence."""
+
+    NONE = ""
+    PARTIAL = "partial"
+    ENTIRE = "entire"
 
 
 @dataclasses.dataclass
@@ -95,14 +104,28 @@ class ParsedLocation:
     house_high_sub: str | None = None
     parity: Parity = Parity.ANY
     is_matchable: bool = True
+    locality: str | None = None
+    qualifier: Qualifier = Qualifier.NONE
 
 
-# Way-type / building-type / area-type words seen in the real Veolia data
-# (patterns doc V-1..V-9). Matched as whole words, case-sensitive is fine
-# since Veolia's own text is consistently capitalized on these.
-_WAY_TYPE_WORDS = ("փողոց", "փող", "պողոտա", "պող", "խճուղի", "խճ", "նրբանցք", "նրբ", "փակուղի", "փակ")
-_BUILDING_TYPE_WORDS = ("շենք", "շենքեր", "շենքերի", "շենք1", "առանձնատուն", "առանձնատներ", "տների")
-_AREA_TYPE_WORDS = ("գյուղ", "գյուղի", "թաղամաս", "թաղամասի", "զանգված", "զանգվածի")
+# Way-type / building-type / area-type words seen in the real Veolia + ENA data
+# (patterns doc V-1..V-9, P-1..P-5). Matched as whole words.
+_WAY_TYPE_WORDS = (
+    "փողոց", "փող", "պողոտա", "պող", "խճուղի", "խճ", "նրբանցք", "նրբ",
+    "փակուղի", "փակ", "անցուղի", "անցուղին", "մայրուղի", "մայրուղին",
+)
+_BUILDING_TYPE_WORDS = (
+    "շենք", "շենքեր", "շենքերի", "շենք1", "առանձնատուն", "առանձնատներ",
+    "տների", "հասցե", "հասցեներ",
+)
+_AREA_TYPE_WORDS = (
+    "գյուղ", "գյուղի", "գյուղեր", "գյուղերն", "գյուղն",
+    "թաղամաս", "թաղամասի", "թաղամասեր",
+    "զանգված", "զանգվածի",
+    "քաղաք", "քաղաքի",
+    "համայնք", "համայնքի",
+    "տարածաշրջան", "տարածաշրջանի",
+)
 # Trailing "streets" noun (not a way-type suffix on a name — this is the
 # plural/genitive noun describing what the preceding numbers *are*,
 # e.g. "12, 14 փողոցների" = "streets 12, 14"). Overlaps in stem with
@@ -110,8 +133,17 @@ _AREA_TYPE_WORDS = ("գյուղ", "գյուղի", "թաղամաս", "թաղամ�
 # — the two lists are used in different roles, not merged, since a name
 # suffix and a trailing "these numbers are streets" noun are different
 # grammatical jobs even though they share a root word.
-_STREET_NUMBER_WORDS = ("փողոցների", "փողոցներ", "փողոցի", "փողոց")
+_STREET_NUMBER_WORDS = (
+    "փողոցների", "փողոցներ", "փողոցներն", "փողոցի", "փողոց", "փողոցն",
+)
 _PARITY_WORDS = {"զույգ": Parity.EVEN, "կենտ": Parity.ODD}
+_QUALIFIER_WORDS = {
+    "մասնակի": Qualifier.PARTIAL,
+    "ամբողջությամբ": Qualifier.ENTIRE,
+}
+# Plural settlement nouns that propagate backward over a bare-name run
+# (ENA: "Աշնակ, Կաթնաղբյուր, Դավթաշեն գյուղեր").
+_PLURAL_AREA_WORDS = ("գյուղեր", "գյուղերն", "թաղամասեր")
 
 _NUMBER_TOKEN_RE = re.compile(r"^(\d+)(?:/(\d+))?([Ա-Ֆա-ֆ]?)$")
 # One number expression: "20", "1-2", "2/1-2/6", "4Ա", "58-58/4", "67-80/2".
@@ -157,6 +189,91 @@ def _detect_parity(text: str) -> Parity:
     return Parity.ANY
 
 
+def _detect_qualifier(text: str) -> Qualifier:
+    for word, qualifier in _QUALIFIER_WORDS.items():
+        if _has_word(text, (word,)):
+            return qualifier
+    return Qualifier.NONE
+
+
+def _strip_qualifiers(text: str) -> str:
+    return _strip_words(text, tuple(_QUALIFIER_WORDS.keys()))
+
+
+# Civic / business markers — fragment is not a residential match target.
+_NON_ADDRESS_MARKERS = (
+    "ՍՊԸ", "ՓԲԸ", "ԱՁ", "ՊՈԱԿ", "ՀՈԱԿ",
+    "դպրոց", "մանկապարտեզ", "մսուր", "ծննդատուն",
+    "զորամաս", "զինմաս", "գազալցակայան", "գազալցակայաններ",
+    "Կադաստր", "Քաղաքապետարան", "Շուկա",
+    "ինստիտուտ", "առողջարան", "հանգստյան", "հանգստի",
+    "օպերատոր", "օպերատորի", "օպերատորների", "կայաններ",
+    "սեփականատեր", "ընկերության", "ընկերությունների",
+)
+_NON_ADDRESS_RE = re.compile(r"թիվ\s*\d+")
+_COMPACT_ORDINAL_RANGE_RE = re.compile(r"\b(\d+)-(\d+)-(րդ|ին)\b")
+_ORDINAL_TOKEN_RE = re.compile(r"^(\d+)-(րդ|ին)$")
+_YEV_SPLIT_RE = re.compile(r"\s+և\s+")
+
+
+def _is_non_address(text: str) -> bool:
+    if "«" in text or "»" in text:
+        return True
+    if _NON_ADDRESS_RE.search(text):
+        return True
+    return _has_word(text, _NON_ADDRESS_MARKERS)
+
+
+def _expand_yev_joins(items: list[str]) -> list[str]:
+    """Split 'A և B փողոցներ' into two comma-items sharing trailing nouns."""
+    expanded: list[str] = []
+    for item in items:
+        parts = _YEV_SPLIT_RE.split(item)
+        if len(parts) != 2:
+            expanded.append(item)
+            continue
+        left, right = parts[0].strip(), parts[1].strip()
+        if not left or not right:
+            expanded.append(item)
+            continue
+        # Don't split numeric house lists joined by և (rare); only name-like.
+        if _NUMBER_EXPR_RE.fullmatch(left.replace(" ", "")):
+            expanded.append(item)
+            continue
+        # Don't split '... շենքեր և հարակից ոչ բնակիչ-բաժանորդներ'.
+        if "բնակիչ-բաժանորդ" in right or right.startswith("հարակից") or right.startswith("կից"):
+            # Keep left only; drop boilerplate right-hand side.
+            expanded.append(left)
+            continue
+        expanded.append(left)
+        expanded.append(right)
+    return expanded
+
+
+def _expand_compact_ordinal_ranges(items: list[str]) -> list[str]:
+    """Expand '1-7-րդ փողոցներ' into '1-րդ', '2-րդ', ... '7-րդ փողոցներ'."""
+    expanded: list[str] = []
+    for item in items:
+        m = _COMPACT_ORDINAL_RANGE_RE.search(item)
+        if not m:
+            expanded.append(item)
+            continue
+        low, high, suffix = int(m.group(1)), int(m.group(2)), m.group(3)
+        if high < low or high - low > 40:
+            expanded.append(item)
+            continue
+        prefix = item[: m.start()].strip()
+        trailing = item[m.end() :].strip()
+        for n in range(low, high + 1):
+            piece = f"{n}-{suffix}"
+            if n == low and prefix:
+                piece = f"{prefix} {piece}"
+            if n == high and trailing:
+                piece = f"{piece} {trailing}"
+            expanded.append(piece.strip())
+    return expanded
+
+
 @dataclasses.dataclass
 class _PendingNumericItem:
     raw_fragment: str
@@ -165,6 +282,55 @@ class _PendingNumericItem:
     high: int
     high_sub: str | None
     after_part: str
+    qualifier: Qualifier = Qualifier.NONE
+
+
+def _apply_plural_area_propagation(results: list[ParsedLocation]) -> None:
+    """
+    ENA: 'Աշնակ, Կաթնաղբյուր, Դավթաշեն գյուղեր' — the plural area noun on
+    the last item applies backward to preceding bare names. Ambiguous
+    'գյուղ1, գյուղ2 մասնակի' keeps qualifier on the last item only.
+    """
+    i = 0
+    while i < len(results):
+        loc = results[i]
+        if loc.kind not in (LocationKind.WHOLE_AREA, LocationKind.WHOLE_STREET):
+            i += 1
+            continue
+        if not loc.street or not _has_word(loc.raw_fragment, _PLURAL_AREA_WORDS):
+            i += 1
+            continue
+        # Walk backward over consecutive bare whole_street names.
+        j = i - 1
+        while j >= 0:
+            prev = results[j]
+            if prev.kind != LocationKind.WHOLE_STREET or not prev.is_matchable:
+                break
+            if prev.qualifier != Qualifier.NONE:
+                break
+            # Don't rewrite something that already looks like a street.
+            if _has_word(prev.raw_fragment, _WAY_TYPE_WORDS + _STREET_NUMBER_WORDS):
+                break
+            results[j] = ParsedLocation(
+                raw_fragment=prev.raw_fragment,
+                kind=LocationKind.WHOLE_AREA,
+                street=prev.street,
+                is_matchable=True,
+                locality=prev.locality,
+                qualifier=prev.qualifier,
+            )
+            j -= 1
+        # Clean plural noun off the last item's street name.
+        clean = _strip_words(loc.street, _AREA_TYPE_WORDS)
+        results[i] = ParsedLocation(
+            raw_fragment=loc.raw_fragment,
+            kind=LocationKind.WHOLE_AREA,
+            street=clean or loc.street,
+            is_matchable=loc.is_matchable,
+            locality=loc.locality,
+            qualifier=loc.qualifier,
+        )
+        i += 1
 
 
 def parse_address_list(raw_text: str) -> list[ParsedLocation]:
@@ -172,25 +338,30 @@ def parse_address_list(raw_text: str) -> list[ParsedLocation]:
     Parse a comma-separated location list (already isolated from the
     surrounding sentence) into ParsedLocation rows. Caller is
     responsible for normalize_text()-ing raw_text first.
+
+    Handles both Veolia's flat lists and ENA planned-list extras
+    (qualifiers, plural village runs, և-joins, ordinal streets,
+    non-address entities). Locality scoping is applied by the ENA
+    caller after this returns — see processing/parsers/ena_locations.py.
     """
     items = [i.strip() for i in raw_text.split(",")]
     items = [i for i in items if i]
+    items = _expand_yev_joins(items)
+    items = _expand_compact_ordinal_ranges(items)
 
     results: list[ParsedLocation] = []
     current_street: str | None = None
     pending_clause: list[_PendingNumericItem] = []
 
     def flush_clause() -> None:
-        """
-        Finalize the buffered run of numeric items under the current
-        street name. Buffered (rather than emitted item-by-item) because
-        the street-vs-house-number trailing word can land on the last
-        item of the run rather than every item in it — see module
-        docstring.
-        """
         if not pending_clause:
             return
-        is_street_numbering = any(_has_word(p.after_part, _STREET_NUMBER_WORDS) for p in pending_clause)
+        is_street_numbering = any(
+            _has_word(p.after_part, _STREET_NUMBER_WORDS) for p in pending_clause
+        )
+        # Ordinal street lists: "8-րդ, 3-րդ, … փողոցներ" were routed here
+        # only when the number path ran — ordinals take the name path.
+        # Bare numbers + trailing փողոցներ → STREET_NUMBER_RANGE (Veolia).
         kind = LocationKind.STREET_NUMBER_RANGE if is_street_numbering else LocationKind.STREET_RANGE
         for p in pending_clause:
             results.append(
@@ -202,16 +373,33 @@ def parse_address_list(raw_text: str) -> list[ParsedLocation]:
                     house_low_sub=p.low_sub,
                     house_high=p.high,
                     house_high_sub=p.high_sub,
-                    # Parity is a house-numbering concept (odd/even side
-                    # of a street) — meaningless for street numbers, so
-                    # it's only ever detected for a genuine house range.
                     parity=_detect_parity(p.after_part) if kind == LocationKind.STREET_RANGE else Parity.ANY,
+                    qualifier=p.qualifier or _detect_qualifier(p.after_part),
                 )
             )
         pending_clause.clear()
 
     for raw_item in items:
-        item = raw_item
+        item = raw_item.strip(" ,;")
+        if not item:
+            continue
+
+        item_qualifier = _detect_qualifier(item)
+        item = _strip_qualifiers(item).strip(" ,;")
+
+        if _is_non_address(item):
+            flush_clause()
+            results.append(
+                ParsedLocation(
+                    raw_fragment=raw_item,
+                    kind=LocationKind.NON_ADDRESS,
+                    street=None,
+                    is_matchable=False,
+                    qualifier=item_qualifier,
+                )
+            )
+            current_street = None
+            continue
 
         # Renamed-street annotation: a '/' before any digit means
         # "current-name/old-name" — keep only the current name.
@@ -222,35 +410,52 @@ def parse_address_list(raw_text: str) -> list[ParsedLocation]:
 
         match = _NUMBER_EXPR_RE.search(item)
 
-        # Ordinal marker ("8-րդ" = "8th"), e.g. a numbered quarter like
-        # "Նոր Նորք 8-րդ զանգված" — not a house/street number. See
-        # module docstring; without this, the bare digit would be
-        # misread as a number and the rest of the name discarded.
-        if match is not None and item[match.end():match.end() + 3] == "-րդ":
-            match = None
+        # Ordinal marker ("8-րդ" / "1-ին") — not a house number. Keep as
+        # a street/area name (ENA numbered streets, Nor Nork blocks).
+        is_ordinal = False
+        if match is not None:
+            rest = item[match.end() :]
+            if rest.startswith("-րդ") or rest.startswith("-ին"):
+                is_ordinal = True
+                match = None
 
         if match is None:
-            # No number anywhere in this item: either a pure parity/
-            # qualifier fragment, or a bare street/area name.
-            if item and all(
-                tok in _PARITY_WORDS or tok in ("համարի",) for tok in item.split()
-            ):
-                # A trailing qualifier-only fragment with nothing to
-                # attach it to (no preceding item this call) — nothing
-                # to do; see module docstring on retroactive parity.
+            # Pure parity/qualifier fragment with nothing to attach to.
+            tokens = item.split()
+            if item and all(tok in _PARITY_WORDS or tok in ("համարի",) for tok in tokens):
+                continue
+            if not item:
                 continue
 
             flush_clause()
 
             name = item
+            # "Նոր Նորք 8-րդ զանգված" is an area (ordinal quarter), not a street.
             is_area = _has_word(name, _AREA_TYPE_WORDS)
-            clean_name = _strip_words(name, _AREA_TYPE_WORDS if is_area else _WAY_TYPE_WORDS)
+            if is_ordinal and not is_area:
+                # Ordinal street: "37-րդ փողոց" / bare "37-րդ" → whole_street.
+                clean_name = _strip_words(name, _WAY_TYPE_WORDS + _STREET_NUMBER_WORDS)
+                street_name = clean_name or name
+                current_street = street_name
+                results.append(
+                    ParsedLocation(
+                        raw_fragment=raw_item,
+                        kind=LocationKind.WHOLE_STREET,
+                        street=current_street,
+                        qualifier=item_qualifier,
+                    )
+                )
+                continue
+
+            strip_set = _AREA_TYPE_WORDS if is_area else (_WAY_TYPE_WORDS + _STREET_NUMBER_WORDS)
+            clean_name = _strip_words(name, strip_set)
             current_street = clean_name or name
             results.append(
                 ParsedLocation(
                     raw_fragment=raw_item,
                     kind=LocationKind.WHOLE_AREA if is_area else LocationKind.WHOLE_STREET,
                     street=current_street,
+                    qualifier=item_qualifier,
                 )
             )
             continue
@@ -261,7 +466,9 @@ def parse_address_list(raw_text: str) -> list[ParsedLocation]:
 
         if parsed is None:
             flush_clause()
-            results.append(ParsedLocation(raw_fragment=raw_item, kind=LocationKind.UNPARSED, is_matchable=False))
+            results.append(
+                ParsedLocation(raw_fragment=raw_item, kind=LocationKind.UNPARSED, is_matchable=False)
+            )
             continue
 
         if name_part:
@@ -269,13 +476,18 @@ def parse_address_list(raw_text: str) -> list[ParsedLocation]:
             current_street = _strip_words(name_part, _WAY_TYPE_WORDS) or name_part
 
         if current_street is None:
-            # A bare number with nothing preceding it in this list —
-            # can't be matched to a street; keep raw, don't guess.
-            results.append(ParsedLocation(raw_fragment=raw_item, kind=LocationKind.UNPARSED, is_matchable=False))
+            results.append(
+                ParsedLocation(raw_fragment=raw_item, kind=LocationKind.UNPARSED, is_matchable=False)
+            )
             continue
 
         low, low_sub, high, high_sub = parsed
-        pending_clause.append(_PendingNumericItem(raw_item, low, low_sub, high, high_sub, after_part))
+        pending_clause.append(
+            _PendingNumericItem(
+                raw_item, low, low_sub, high, high_sub, after_part, item_qualifier
+            )
+        )
 
     flush_clause()
+    _apply_plural_area_propagation(results)
     return results

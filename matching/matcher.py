@@ -110,14 +110,36 @@ def _raw_text_matches_address(announcement: OutageAnnouncement, address: Address
 
 
 def _location_matches_address(location: OutageLocation, address: Address) -> bool:
-    if not location.is_matchable or location.kind == LocationKind.UNPARSED:
+    if not location.is_matchable or location.kind in (
+        LocationKind.UNPARSED,
+        LocationKind.NON_ADDRESS,
+    ):
         return False
     if not location.street:
         return False
-    if _normalize_street(location.street) != _normalize_street(address.street):
+
+    # Nested ENA locality (e.g. Մասիս քաղաք vs Արարատ քաղաք under one marz).
+    if location.locality and address.district_or_city:
+        loc_norm = _normalize_street(location.locality)
+        dist_norm = _normalize_street(address.district_or_city)
+        if loc_norm != dist_norm and loc_norm not in dist_norm and dist_norm not in loc_norm:
+            return False
+
+    street_norm = _normalize_street(location.street)
+    addr_street = _normalize_street(address.street)
+    addr_district = _normalize_street(address.district_or_city or "")
+
+    if location.kind == LocationKind.WHOLE_AREA:
+        # Prefer district_or_city; fall back to street (users may put the
+        # village name in either field).
+        if addr_district and (street_norm == addr_district or street_norm in addr_district or addr_district in street_norm):
+            return True
+        return bool(addr_street) and street_norm == addr_street
+
+    if street_norm != addr_street:
         return False
 
-    if location.kind in (LocationKind.WHOLE_AREA, LocationKind.WHOLE_STREET):
+    if location.kind == LocationKind.WHOLE_STREET:
         return True
     if location.kind == LocationKind.STREET_NUMBER_RANGE:
         # These numbers are STREET numbers (numbered-street areas like
