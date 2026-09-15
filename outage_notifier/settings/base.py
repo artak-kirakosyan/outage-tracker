@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "processing",
     "accounts",
     "notifications",
+    "bot",
 ]
 
 MIDDLEWARE = [
@@ -102,6 +103,8 @@ HTTP_FETCH_USER_AGENT = os.environ.get(
 
 VEOLIA_TELEGRAM_CHANNEL = os.environ.get("VEOLIA_TELEGRAM_CHANNEL", "VeoliaJur")
 
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+
 # Independent per-provider polling cadence for the v1 in-process scheduler
 # (see ingestion/scheduler.py). Deliberately different defaults: the
 # Telegram channel posts emergency outages as they happen, so it's
@@ -116,6 +119,10 @@ VEOLIA_TELEGRAM_FETCH_INTERVAL_MINUTES = int(
 # polite to), so it defaults to a much shorter interval than the
 # fetchers above.
 PROCESS_RAW_CONTENT_INTERVAL_MINUTES = int(os.environ.get("PROCESS_RAW_CONTENT_INTERVAL_MINUTES", "5"))
+
+# compute_notifications + send_notifications, run back-to-back as one
+# scheduler job -- see run_scheduler.py.
+NOTIFICATION_INTERVAL_MINUTES = int(os.environ.get("NOTIFICATION_INTERVAL_MINUTES", "5"))
 
 # matching.matcher bounds its OutageAnnouncement query by time rather
 # than scanning the whole (ever-growing, never-pruned) table on every

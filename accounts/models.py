@@ -2,7 +2,23 @@ from django.db import models
 
 from common.enums import Channel, Region
 
-__all__ = ["User", "Address"]
+__all__ = ["User", "Address", "format_house_number"]
+
+
+def format_house_number(number: int, sub: str) -> str:
+    """
+    A numeric sub (e.g. "12") is a separate '/'-style sub-address
+    ("21/12", matching ENA/Veolia's own "21/12" notation -- see
+    processing/address_grammar.py); a non-numeric sub (e.g. "A"/"Ա")
+    is a direct suffix ("4A"). Without this distinction both forms
+    concatenate identically and "21" sub "12" silently renders as the
+    unreadable "2112".
+    """
+    if not sub:
+        return str(number)
+    if sub.isdigit():
+        return f"{number}/{sub}"
+    return f"{number}{sub}"
 
 
 class User(models.Model):
@@ -63,5 +79,5 @@ class Address(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self) -> str:
-        base = f"{self.street} {self.house_number}{self.house_number_sub}"
+        base = f"{self.street} {format_house_number(self.house_number, self.house_number_sub)}"
         return f"{self.label} ({base})" if self.label else base

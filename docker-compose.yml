@@ -30,5 +30,17 @@ services:
     depends_on:
       - scheduler
 
+  bot:
+    build: .
+    command: run_bot
+    env_file:
+      - .env
+    environment:
+      SQLITE_PATH: /data/db.sqlite3
+      RAW_DUMP_DIRECTORY: /data/dumps
+    volumes:
+      - db-data:/data
+    restart: unless-stopped
+
 volumes:
   db-data:
