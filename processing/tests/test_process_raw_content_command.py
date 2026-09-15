@@ -112,14 +112,18 @@ def test_error_status_rows_are_never_processed():
 def test_extraction_failure_marks_processed_without_crashing():
     """An OK-status row whose markup doesn't match expectations must be
     marked processed (so it isn't retried forever) rather than raising."""
+    from processing.dashboard import EXTRACTION_FAILED_PREFIX
+
     _make_raw_content(
         provider=Provider.ENA, source_type=SourceType.HTML, content="<html><body>unexpected markup</body></html>"
     )
 
     call_command("process_raw_content")  # must not raise
 
+    raw = RawContent.objects.get()
     assert OutageAnnouncement.objects.count() == 0
-    assert RawContent.objects.get().processed is True
+    assert raw.processed is True
+    assert raw.error_message.startswith(EXTRACTION_FAILED_PREFIX)
 
 
 def test_ena_announcement_is_preliminary_is_downgraded_on_reconfirmation():

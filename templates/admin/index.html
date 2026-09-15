@@ -1,0 +1,147 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static pipeline_health %}
+
+{% block extrastyle %}{{ block.super }}
+<link rel="stylesheet" href="{% static "admin/css/dashboard.css" %}">
+<style>
+  .pipeline-health { margin: 0 0 24px; }
+  .pipeline-health h2 {
+    margin: 0 0 12px;
+    font-size: 1.1rem;
+  }
+  .pipeline-groups {
+    display: grid;
+    gap: 16px;
+  }
+  @media (min-width: 900px) {
+    .pipeline-groups { grid-template-columns: repeat(3, 1fr); }
+  }
+  .pipeline-group {
+    background: var(--body-bg, #fff);
+    border: 1px solid var(--hairline-color, #e8e8e8);
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .pipeline-group h3 {
+    margin: 0 0 10px;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--body-quiet-color, #666);
+  }
+  .pipeline-metric {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 0;
+    border-top: 1px solid var(--hairline-color, #eee);
+  }
+  .pipeline-metric:first-of-type { border-top: 0; padding-top: 0; }
+  .pipeline-metric .count {
+    min-width: 2.4rem;
+    font-size: 1.35rem;
+    font-weight: 700;
+    line-height: 1.1;
+    text-align: right;
+  }
+  .pipeline-metric .meta { flex: 1; min-width: 0; }
+  .pipeline-metric .label {
+    display: block;
+    font-weight: 600;
+    color: var(--body-fg, #333);
+    text-decoration: none;
+  }
+  .pipeline-metric a.label:hover { text-decoration: underline; }
+  .pipeline-metric .detail {
+    display: block;
+    margin-top: 2px;
+    font-size: 0.8rem;
+    color: var(--body-quiet-color, #666);
+  }
+  .pipeline-metric.severity-ok .count { color: var(--body-quiet-color, #666); }
+  .pipeline-metric.severity-warn .count { color: #b45309; }
+  .pipeline-metric.severity-critical .count { color: var(--error-fg, #ba2121); }
+  .pipeline-metric.severity-warn,
+  .pipeline-metric.severity-critical {
+    background: color-mix(in srgb, var(--error-fg, #ba2121) 6%, transparent);
+    margin: 0 -8px;
+    padding-left: 8px;
+    padding-right: 8px;
+    border-radius: 4px;
+  }
+  .pipeline-metric.severity-warn {
+    background: color-mix(in srgb, #b45309 8%, transparent);
+  }
+</style>
+{% endblock %}
+
+{% block coltype %}colMS{% endblock %}
+
+{% block bodyclass %}{{ block.super }} dashboard{% endblock %}
+
+{% block nav-breadcrumbs %}{% endblock %}
+
+{% block nav-sidebar %}{% endblock %}
+
+{% block content %}
+{% pipeline_health as health %}
+<div id="content-main">
+  <div class="pipeline-health module">
+    <h2>Pipeline health</h2>
+    <div class="pipeline-groups">
+      {% for group in health %}
+      <section class="pipeline-group">
+        <h3>{{ group.title }}</h3>
+        {% for metric in group.metrics %}
+        <div class="pipeline-metric severity-{{ metric.severity }}">
+          <div class="count">{{ metric.count }}</div>
+          <div class="meta">
+            {% if metric.admin_url %}
+            <a class="label" href="{{ metric.admin_url }}">{{ metric.label }}</a>
+            {% else %}
+            <span class="label">{{ metric.label }}</span>
+            {% endif %}
+            <span class="detail">{{ metric.detail }}</span>
+          </div>
+        </div>
+        {% endfor %}
+      </section>
+      {% endfor %}
+    </div>
+  </div>
+  {% include "admin/app_list.html" with app_list=app_list show_changelinks=True %}
+</div>
+{% endblock %}
+
+{% block sidebar %}
+<div id="content-related">
+    <div class="module" id="recent-actions-module">
+        <h2>{% translate 'Recent actions' %}</h2>
+        <h3>{% translate 'My actions' %}</h3>
+            {% load log %}
+            {% get_admin_log 10 as admin_log for_user user %}
+            {% if not admin_log %}
+            <p>{% translate 'None available' %}</p>
+            {% else %}
+            <ul class="actionlist">
+            {% for entry in admin_log %}
+            <li class="{% if entry.is_addition %}addlink{% endif %}{% if entry.is_change %}changelink{% endif %}{% if entry.is_deletion %}deletelink{% endif %}">
+                <span class="visually-hidden">{% if entry.is_addition %}{% translate 'Added:' %}{% elif entry.is_change %}{% translate 'Changed:' %}{% elif entry.is_deletion %}{% translate 'Deleted:' %}{% endif %}</span>
+                {% if entry.is_deletion or not entry.get_admin_url %}
+                    {{ entry.object_repr }}
+                {% else %}
+                    <a href="{{ entry.get_admin_url }}">{{ entry.object_repr }}</a>
+                {% endif %}
+                <br>
+                {% if entry.content_type %}
+                    <span class="mini quiet">{% filter capfirst %}{{ entry.content_type.name }}{% endfilter %}</span>
+                {% else %}
+                    <span class="mini quiet">{% translate 'Unknown content' %}</span>
+                {% endif %}
+            </li>
+            {% endfor %}
+            </ul>
+            {% endif %}
+    </div>
+</div>
+{% endblock %}
