@@ -27,6 +27,12 @@ class RawContentAdmin(admin.ModelAdmin):
         "dump_file_path",
     )
     date_hierarchy = "fetched_at"
+    actions = ["mark_unprocessed"]
+
+    @admin.action(description="Mark unprocessed selected raw contents")
+    def mark_unprocessed(self, request, queryset):
+        updated = queryset.update(processed=False)
+        self.message_user(request, f"Successfully marked {updated} entities as unprocessed.")
 
     @admin.display(description="Content preview")
     def content_preview(self, obj: RawContent) -> str:

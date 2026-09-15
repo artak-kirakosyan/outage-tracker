@@ -8,6 +8,7 @@ from ingestion.models import FetchStatus, Provider, RawContent
 from processing.html_extract import extract_ena_planned_section, extract_veolia_telegram_posts
 from processing.idempotency import ena_external_ref
 from processing.models import OutageAnnouncement, OutageLocation, OutageType
+from processing.normalize import normalize_multiline
 from processing.parsers.ena_planned import parse_planned_section
 from processing.parsers.veolia_telegram import parse_post
 
@@ -74,6 +75,8 @@ class Command(BaseCommand):
             logger.error("ENA planned section ('attenbody') not found in RawContent id=%s.", raw.id)
             summary["extraction_failed"] += 1
             return
+
+        section = normalize_multiline(section)
 
         year = dj_timezone.localtime(raw.fetched_at).year
         for item in parse_planned_section(section, year=year):
