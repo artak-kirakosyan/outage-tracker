@@ -60,7 +60,7 @@ def test_processes_veolia_page_into_announcements_and_locations():
     assert announcement.starts_at.tzinfo is not None  # localized, not naive
 
 
-def test_processes_ena_page_into_announcements_without_locations():
+def test_processes_ena_page_into_announcements_with_locations():
     html = (FIXTURES / "ena_page_sample.html").read_text(encoding="utf-8")
     _make_raw_content(provider=Provider.ENA, source_type=SourceType.HTML, content=html)
 
@@ -68,8 +68,7 @@ def test_processes_ena_page_into_announcements_without_locations():
 
     announcements = OutageAnnouncement.objects.filter(provider=Provider.ENA)
     assert announcements.count() > 0
-    # ENA planned stays shallow in v1 -- no per-location decomposition.
-    assert OutageLocation.objects.filter(announcement__provider=Provider.ENA).count() == 0
+    assert OutageLocation.objects.filter(announcement__provider=Provider.ENA).count() > 0
     assert RawContent.objects.get().processed is True
 
 
