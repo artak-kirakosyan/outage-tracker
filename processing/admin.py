@@ -10,6 +10,7 @@ class OutageLocationInline(admin.TabularInline):
     readonly_fields = (
         "raw_fragment", "kind", "street", "house_low", "house_low_sub",
         "house_high", "house_high_sub", "parity", "is_matchable",
+        "locality", "qualifier",
     )
     can_delete = False
 

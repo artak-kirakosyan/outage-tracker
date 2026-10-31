@@ -305,3 +305,75 @@ def test_match_confidence_for_announcement_ignores_the_time_window_bound():
     assert match_confidence_for_announcement(address, announcement) is Confidence.FULL_ADDRESS
     assert find_matches_for_address(address) == []
 
+
+def test_ena_with_house_range_locations_is_full_address():
+    address = _address(region=Region.YEREVAN, street="Շարուրի", house_number=8)
+    announcement = _announcement(
+        marz="Երևան", provider=Provider.ENA, raw_address_text="Շարուրի փողոց 7, 8, 9 շենքեր",
+        external_ref="ena-houses",
+    )
+    OutageLocation.objects.create(
+        announcement=announcement, raw_fragment="8", kind=LocationKind.STREET_RANGE,
+        street="Շարուրի", house_low=8, house_high=8,
+    )
+    matches = find_matches_for_address(address)
+    assert len(matches) == 1
+    assert matches[0].confidence == Confidence.FULL_ADDRESS
+
+
+def test_ena_locality_scoping_rejects_wrong_city():
+    address = _address(
+        region=Region.ARARAT, district_or_city="Արարատ քաղաք", street="Շիրակի", house_number=1,
+    )
+    announcement = _announcement(
+        marz="Արարատի", provider=Provider.ENA, external_ref="ena-multi",
+        raw_address_text="Մասիս քաղաք՝ Շիրակի փողոց",
+    )
+    OutageLocation.objects.create(
+        announcement=announcement, raw_fragment="Շիրակի", kind=LocationKind.WHOLE_STREET,
+        street="Շիրակի", locality="Մասիս քաղաք",
+    )
+    assert find_matches_for_address(address) == []
+
+
+def test_ena_locality_scoping_accepts_matching_city():
+    address = _address(
+        region=Region.ARARAT, district_or_city="Մասիս քաղաք", street="Շիրակի", house_number=1,
+    )
+    announcement = _announcement(
+        marz="Արարատի", provider=Provider.ENA, external_ref="ena-multi-ok",
+        raw_address_text="Մասիս քաղաք՝ Շիրակի փողոց",
+    )
+    OutageLocation.objects.create(
+        announcement=announcement, raw_fragment="Շիրակի", kind=LocationKind.WHOLE_STREET,
+        street="Շիրակի", locality="Մասիս քաղաք",
+    )
+    assert len(find_matches_for_address(address)) == 1
+
+
+def test_ena_whole_area_matches_district_or_city():
+    address = _address(region=Region.ARARAT, district_or_city="Ուջան", street="unused", house_number=1)
+    announcement = _announcement(
+        marz="Արարատի", provider=Provider.ENA, external_ref="ena-village",
+        raw_address_text="Ուջան գյուղ մասնակի",
+    )
+    OutageLocation.objects.create(
+        announcement=announcement, raw_fragment="Ուջան գյուղ", kind=LocationKind.WHOLE_AREA,
+        street="Ուջան",
+    )
+    assert len(find_matches_for_address(address)) == 1
+
+
+def test_ena_non_address_only_does_not_match():
+    address = _address(region=Region.YEREVAN, street="Anything", house_number=1)
+    announcement = _announcement(
+        marz="Երևան", provider=Provider.ENA, external_ref="ena-biz",
+        raw_address_text="«Foo» ՍՊԸ",
+    )
+    OutageLocation.objects.create(
+        announcement=announcement, raw_fragment="«Foo» ՍՊԸ", kind=LocationKind.NON_ADDRESS,
+        street=None, is_matchable=False,
+    )
+    # Locations exist → no STREET_ONLY fallback; non_address → no match.
+    assert find_matches_for_address(address) == []
+

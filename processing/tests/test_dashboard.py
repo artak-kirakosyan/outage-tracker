@@ -64,7 +64,7 @@ def test_unprocessed_backlog_ignores_fresh_and_veolia_web():
     fresh = _raw(provider=Provider.ENA, processed=False)
     web = _raw(provider=Provider.VEOLIA_WEB, processed=False)
     RawContent.objects.filter(pk=stale.pk).update(fetched_at=now - timedelta(hours=2))
-    RawContent.objects.filter(pk=fresh.pk).update(fetched_at=now - timedelta(minutes=10))
+    RawContent.objects.filter(pk=fresh.pk).update(fetched_at=now - timedelta(minutes=1))
     RawContent.objects.filter(pk=web.pk).update(fetched_at=now - timedelta(hours=5))
 
     metrics = _metric_map(get_pipeline_health())

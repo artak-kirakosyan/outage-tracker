@@ -2,7 +2,7 @@ from django.db import models
 
 from common.enums import Provider
 from ingestion.models import RawContent
-from processing.address_grammar import LocationKind, Parity
+from processing.address_grammar import LocationKind, Parity, Qualifier
 
 __all__ = ["OutageType", "ParseStatus", "OutageAnnouncement", "OutageLocation"]
 
@@ -67,10 +67,8 @@ class OutageAnnouncement(models.Model):
 
 class OutageLocation(models.Model):
     """
-    One row per decomposed address-list item. Veolia-only in v1 -- ENA
-    planned announcements keep their address text verbatim on
-    raw_address_text and never get OutageLocation rows (see the
-    fidelity-split decision in docs/phase-1-processing-plan.md §4).
+    One row per decomposed address-list item. Produced for Veolia Telegram
+    posts and ENA planned announcements (see processing/parsers/ena_locations.py).
     """
 
     announcement = models.ForeignKey(OutageAnnouncement, on_delete=models.CASCADE, related_name="locations")
@@ -91,6 +89,16 @@ class OutageLocation(models.Model):
         default=Parity.ANY.value,
     )
     is_matchable = models.BooleanField(default=True)
+    # Nested city/village/quarter from ENA address text (e.g. "Վարդենիկ գյուղ");
+    # empty when the list is flat under the announcement's district/marz.
+    locality = models.CharField(max_length=256, blank=True, default="")
+    # ENA մասնակի / ամբողջությամբ — stored for notification copy later.
+    qualifier = models.CharField(
+        max_length=16,
+        choices=[(q.value, q.name.title()) for q in Qualifier if q.value],
+        blank=True,
+        default="",
+    )
 
     class Meta:
         indexes = [

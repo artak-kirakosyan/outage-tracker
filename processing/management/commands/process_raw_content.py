@@ -10,8 +10,10 @@ from processing.html_extract import extract_ena_planned_section, extract_veolia_
 from processing.idempotency import ena_external_ref
 from processing.models import OutageAnnouncement, OutageLocation, OutageType
 from processing.normalize import normalize_multiline
+from processing.parsers.ena_locations import parse_ena_locations
 from processing.parsers.ena_planned import parse_planned_section
 from processing.parsers.veolia_telegram import parse_post
+from processing.persist_locations import locations_from_parsed
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +105,10 @@ class Command(BaseCommand):
             )
             if created:
                 summary["announcements_created"] += 1
+                parsed_locs = parse_ena_locations(item.raw_address_text)
+                rows = locations_from_parsed(obj, parsed_locs)
+                OutageLocation.objects.bulk_create(rows)
+                summary["locations_created"] += len(rows)
             else:
                 summary["announcements_touched"] += 1
                 update_fields = ["last_seen_at"]
@@ -153,21 +159,7 @@ class Command(BaseCommand):
                 # announcement -- a repeat sighting of the same post
                 # (same external_ref) just bumps last_seen_at below, it
                 # never re-derives or duplicates the location rows.
-                locations = [
-                    OutageLocation(
-                        announcement=obj,
-                        raw_fragment=loc.raw_fragment,
-                        kind=loc.kind.value,
-                        street=loc.street,
-                        house_low=loc.house_low,
-                        house_low_sub=loc.house_low_sub,
-                        house_high=loc.house_high,
-                        house_high_sub=loc.house_high_sub,
-                        parity=loc.parity.value,
-                        is_matchable=loc.is_matchable,
-                    )
-                    for loc in result.locations
-                ]
+                locations = locations_from_parsed(obj, result.locations)
                 OutageLocation.objects.bulk_create(locations)
                 summary["locations_created"] += len(locations)
             else:

@@ -1,32 +1,49 @@
 # ENA Matching: From Low Confidence to High Confidence
 
 Snapshot of the full ENA pipeline (HTML page → parsing → storage →
-matching → notification), what actually works today, and what needs to
-change for ENA-sourced matches to reach the same confidence level as
-Veolia's.
+matching → notification), what actually works today, and what still
+needs to change for ENA-sourced matches.
 
-## Why ENA matches are "low confidence" today
+## Why ENA matches used to be "low confidence"
 
 `matching/matcher.py` picks a path per announcement: if it has
 `OutageLocation` rows, do a structured street+range/parity match
-(`confidence="high"`); if not, fall back to a substring search on
-`raw_address_text` (`confidence="low"`). Every ENA announcement takes the
-second path, because `processing/parsers/ena_planned.py` never produces
-`OutageLocation` rows in the first place — that's a pre-existing scope
-decision (`docs/phase-1-processing-plan.md` §4), not something the
-matching layer introduced.
+(`confidence="full_address"`); if not, fall back to a substring search on
+`raw_address_text` (`confidence="street_only"`).
 
-**Why the decomposition was never built:** ENA's address text nests a
+Until the ENA location parser landed, every ENA announcement took the
+second path, because `processing/parsers/ena_planned.py` never produced
+`OutageLocation` rows — a deliberate v1 fidelity split
+(`docs/phase-1-processing-plan.md` §4).
+
+**Why the decomposition was deferred:** ENA's address text nests a
 second heading level *inside* a single time-slot's text (village names
 like `"Զոլաքար գյուղ՝ 17-րդ, 18-րդ..."`, using the same `՝` marker a
 region heading uses), mixed freely with plain street lists, business
 names, numbered-street ranges, and qualifiers (`մասնակի`/`ամբողջությամբ`)
 whose scope is often ambiguous across multiple list items. That's a
-meaningfully bigger grammar than Veolia's flat comma-list, and ENA's
-planned block was judged less real-time-critical than Veolia's emergency
-feed — so the effort went into Veolia's decomposition first.
-`raw_address_text` is kept verbatim specifically so a real ENA location
-parser can be built later without re-fetching anything.
+meaningfully bigger grammar than Veolia's flat comma-list.
+
+## Status of the location parser (2026-09-15)
+
+✅ **Done.** `processing/parsers/ena_locations.py` decomposes
+`raw_address_text` into `OutageLocation` rows (nested localities,
+qualifiers, plural village runs, ordinal streets, non-address entities).
+New ENA announcements get locations on create; existing rows are
+rebuildable via `manage.py backfill_ena_locations`.
+
+Matching now uses the structured `FULL_ADDRESS` path when locations
+exist, with locality scoping for multi-city announcements under one
+marz. `STREET_ONLY` raw-text fallback remains only when an announcement
+has zero locations.
+
+Remaining known gaps:
+- District spelling variants (`Մալաթիա Սեբաստիա` vs `Մալաթիա-Սեբաստիա`)
+  still need canonicalization for locality checks.
+- `մասնակի` is stored on `OutageLocation.qualifier` but does not yet
+  change notification copy.
+- Ambiguous qualifier scope (`գյուղ1, գյուղ2 մասնակի`) applies to the
+  last item only.
 
 ## The pipeline, stage by stage
 
@@ -35,72 +52,45 @@ parser can be built later without re-fetching anything.
 page verbatim. Live-fetching confirmed working against the real site.
 
 ### 2. HTML extraction — `processing/html_extract.py::extract_ena_planned_section`
-✅ **Confirmed working.** Analysis of 120 real DB fetches confirmed the `ctl00_ContentPlaceHolder1_attenbody` ID is stable and correctly extracts the planned section text. (Previously flagged as a risk, now verified).
+✅ **Confirmed working.** Analysis of 120 real DB fetches confirmed the `ctl00_ContentPlaceHolder1_attenbody` ID is stable and correctly extracts the planned section text.
 
-### 3. Parsing — `processing/parsers/ena_planned.py`
-✅ Region/time/date extraction is solid and now fully tested against real historical fetches. 
-**Fixed (2026-09-15):** Previously, ENA's use of the `&ndash;` (en-dash) HTML entity instead of standard hyphens for time ranges (e.g. `10:00–13:00`) caused almost all ENA records to parse as `partial` with `null` start/end times. This was fixed by ensuring `normalize_multiline()` is called in the processing pipeline, resulting in a 100% `ok` parse status (449 out of 449 records) across historical DB fetches.
+### 3. Parsing — `processing/parsers/ena_planned.py` + `ena_locations.py`
+✅ Region/time/date extraction is solid and tested against real historical fetches.
+✅ Address-list decomposition into `OutageLocation` (see above).
+**Fixed (2026-09-15):** ENA's `&ndash;` (en-dash) HTML entity for time
+ranges is normalized via `normalize_multiline()` before parse.
 
 ### 4. Persistence — `processing/management/commands/process_raw_content.py`
 ✅ Mechanics are solid: idempotent via a content hash, correctly
 reconciles a "preliminary" sighting into "confirmed" without
-duplicating. ❌ **Only ever processes the "Պլանային անջատումներ"
+duplicating, and creates ENA `OutageLocation` rows on announcement
+create. ❌ **Only ever processes the "Պլանային անջատումներ"
 (planned) section.** ENA's other section — the actual
-"Վթարային և կանխարգելիչ անջատումներ" (emergency/preventive) table,
-~12,000 rows per `docs/data-patterns.md` §1.1 — is explicitly out of
-scope. That table's HTML sits in `RawContent.content` untouched (nothing
-lost), just never parsed. **Practically: ENA's genuinely urgent outages
-don't reach this notification system at all right now** — only
-scheduled/planned maintenance does.
+"Վթարային և կանխարգելիչ անջատումներ" (emergency/preventive) table —
+is explicitly out of scope. That table's HTML sits in `RawContent.content`
+untouched (nothing lost), just never parsed.
 
 ### 5. Matching — `matching/matcher.py`
-Four separate, real gaps, not just "no house-number check":
-- **No house-number granularity** — a user at house 2 and house 200 on
-  the same street both match.
-- **Substring false positives from partial name overlap** — the check
-  is literally `street_name in raw_text`, so e.g. a street named
-  "Կենտրոն" matches any announcement mentioning "Կենտրոնական" (a
-  different, longer name that contains it as a substring).
-- **Nested-locality structure isn't respected.** `raw_address_text` is
-  scoped per (region, time-slot), but multiple villages can each list
-  their own streets within that slot. A substring match doesn't know
-  which village a street belongs to — two different villages with a
-  same-named street in one time-slot are indistinguishable to it.
-- **Qualifier scope is invisible.** Whether it's `մասնակի` (partial) or
-  `ամբողջությամբ` (entire) doesn't factor in at all — a substring hit
-  gives no information about how much of the street is actually
-  affected.
+With locations present, ENA uses the same structured path as Veolia
+(street equality / house range / whole-area vs district). Locality
+scoping reduces false positives across cities listed in one marz block.
+`STREET_ONLY` substring matching remains only as a fallback when
+decomposition produced no rows.
 
 ### 6. Notification logging
-Works correctly on its own terms (idempotent, tested), but is purely
-downstream — it inherits every gap above with no way to tell them
-apart. A `NotificationLog` row with `match_confidence="low"` could mean
-any of the four matching gaps, or a completely legitimate match, with
-no way to distinguish which today.
+Works correctly on its own terms (idempotent, tested). Downstream of
+matching confidence.
 
-## Summary
+### 7. Monitoring
+✅ Admin pipeline-health dashboard surfaces fetch/extraction/parse/
+notification failures (see `templates/admin/index.html`).
 
-The parsing and persistence logic for what ENA data *does* get
-processed is solid, tested against real production fixtures, and correctly handling ENA's tricky en-dash time separators. An entire category of
-ENA outages (the actually urgent ones) still isn't processed at all. And the
-matching layer's low confidence on ENA isn't just "no house number" —
-it's four separate, real gaps stacked on top of an already narrower
-data source.
+## What remains
 
-## What "high confidence" would actually require
-
-Roughly in the order that unblocks the most downstream value:
-
-1. **Build a real ENA address-location parser**, decomposing
-   `raw_address_text` into `OutageLocation` rows the way Veolia's
-   parser does — including handling the nested locality sub-headings
-   and qualifier scope that made this out of scope for v1. This is the
-   single change that would let ENA matches use the same structured
-   `confidence="high"` path Veolia already has. *(Note: District spellings in ENA source are often inconsistent, e.g., "Մալաթիա Սեբաստիա" vs "Մալաթիա-Սեբաստիա", which will require canonicalization here).*
+1. ~~Build a real ENA address-location parser~~ **Done** (see above).
 2. **Decide on and scope the emergency/preventive table** — whether
    it's worth the "12,000-row watermarking problem" and abbreviation
    unknowns already documented, given it's the actually time-sensitive
    half of ENA's data.
-3. **Add monitoring on `parse_status` distribution** (and
-   `extraction_failed`) so drift or breakage surfaces proactively
-   instead of requiring someone to check `/admin/`.
+3. District spelling canonicalization for locality matching.
+4. Optional: surface `մասնակի` in notification copy.
