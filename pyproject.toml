@@ -9,6 +9,8 @@ dependencies = [
     "python-dotenv>=1.0",
     "beautifulsoup4>=4.12",
     "python-telegram-bot>=20",
+    "google-genai>=2.34.0",
+    "pydantic>=2.14.2",
 ]
 
 [dependency-groups]

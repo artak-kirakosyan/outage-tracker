@@ -154,6 +154,13 @@ ENA_FETCH_ENABLED = _env_bool("ENA_FETCH_ENABLED", True)
 VEOLIA_WEB_FETCH_ENABLED = _env_bool("VEOLIA_WEB_FETCH_ENABLED", True)
 VEOLIA_TELEGRAM_FETCH_ENABLED = _env_bool("VEOLIA_TELEGRAM_FETCH_ENABLED", True)
 
+# --- Gemini AI Parser settings ----------------------------------------
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash-lite")
+GEMINI_REQUEST_DELAY_SECONDS = float(os.environ.get("GEMINI_REQUEST_DELAY_SECONDS", "0.0"))
+USE_AI_PARSER = _env_bool("USE_AI_PARSER", True)
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,

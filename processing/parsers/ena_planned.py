@@ -77,6 +77,7 @@ class EnaPlannedAnnouncement:
     raw_heading_text: str
     raw_address_text: str
     parse_status: str  # "ok" | "partial" | "failed"
+    parsed_locations: list = dataclasses.field(default_factory=list)
 
 
 def _split_region(region_text: str) -> tuple[str | None, str | None]:

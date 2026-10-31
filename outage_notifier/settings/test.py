@@ -12,3 +12,8 @@ DATABASES = {
 
 # Never let tests write into the real .dumps/ directory.
 RAW_DUMP_DIRECTORY = Path(tempfile.mkdtemp(prefix="outage-notifier-test-dumps-"))
+
+# Unit tests run hermetically without external LLM calls by default
+USE_AI_PARSER = False
+GEMINI_API_KEY = ""
+
